@@ -1,0 +1,29 @@
+{
+  
+  "selectors": [
+    {
+      "class": "BBIKDJSelector",          
+      "alias": "bk",
+      "activate": true,
+      "params": {                         
+        "threshold": -5,
+        "bbi_min_window": 10,
+        "bbi_offset_n": 8,
+        "max_window": 60
+      }
+    },
+    {
+      "class": "BBIShortLongSelector",
+      "alias": "sl",
+      "activate": true,
+      "params": {
+        "n_short": 3,
+        "n_long": 21,
+        "m": 4,
+        "bbi_min_window": 5,
+        "bbi_offset_n": 0,
+        "max_window": 60
+      }
+    }
+  ]
+}
