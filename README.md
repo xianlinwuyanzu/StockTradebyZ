@@ -80,7 +80,7 @@ python select_stock.py \
 
 ### 内置策略参数
 
-> 以下参数来自 `configs.json`，可按需调整。 fileciteturn0file1
+> 以下参数来自 `configs.json`，可按需调整。
 
 #### 1. BBIKDJSelector（少妇战法）
 
