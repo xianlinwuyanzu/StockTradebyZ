@@ -59,14 +59,14 @@ def get_constituents(min_cap: float) -> List[str]:
     df = _get_mktcap_ak()
     cond = (
         (df["mktcap"] >= min_cap)
-        & ~df["code"].str.startswith(("300", "301", "688", "8", "4"))
+        # & ~df["code"].str.startswith(("300", "301", "688", "8", "4"))
     )
     codes = df.loc[cond, "code"].str.zfill(6).tolist()
     with open("appendix.json", 'r', encoding='utf-8') as f:
         appendix_codes = json.load(f)["data"]
     appendix_codes = [c for c in appendix_codes if c not in codes]
     codes = appendix_codes+codes
-    logger.info("AKShare 筛选市值≥ %.0f 亿且非创业板股票+自选股票共 %d 只", (min_cap / 1e8), len(codes))
+    logger.info("AKShare 筛选市值≥ %.0f 亿+自选股票共 %d 只", (min_cap / 1e8), len(codes))
     return codes
 
 # ---- 历史 K 线 ---- #
