@@ -55,12 +55,17 @@ def _get_mktcap_ak() -> pd.DataFrame:
     return df
 
 
-def get_constituents(min_cap: float) -> List[str]:
+def get_constituents(min_cap: float, small_player:bool) -> List[str]:
     df = _get_mktcap_ak()
-    cond = (
-        (df["mktcap"] >= min_cap)
-        # & ~df["code"].str.startswith(("300", "301", "688", "8", "4"))
-    )
+    if small_player:
+        cond = (
+            (df["mktcap"] >= min_cap)
+            & ~df["code"].str.startswith(("300", "301", "688", "8", "4"))
+        )
+    else:
+        cond = (
+            (df["mktcap"] >= min_cap)            
+        )
     codes = df.loc[cond, "code"].str.zfill(6).tolist()
     with open("appendix.json", 'r', encoding='utf-8') as f:
         appendix_codes = json.load(f)["data"]
@@ -202,11 +207,12 @@ def fetch_one(
 
 def main():
     parser = argparse.ArgumentParser(description="按市值筛选 A 股并抓取历史 K 线")
+    parser.add_argument("--small-player", type=bool, default=True, help="为True则不获取创业板股票")
     parser.add_argument("--min-mktcap", type=float, default=2.5e10, help="最小总市值，默认2.5e10")
     parser.add_argument("--start", default="20250101", help="起始日期 YYYYMMDD (默认 20050101)")
     parser.add_argument("--end", default="today", help="结束日期 YYYY-MM-DD 或 'today' (默认 today)")
     parser.add_argument("--out", default="./data", help="输出目录 (默认 ./data)")
-    parser.add_argument("--workers", type=int, default=1, help="并发线程数 (默认 20)")    
+    parser.add_argument("--workers", type=int, default=20, help="并发线程数 (默认 20)")    
     args = parser.parse_args()
 
     start = args.start
@@ -224,7 +230,7 @@ def main():
         out_dir.resolve(),
     )
 
-    codes = get_constituents(args.min_mktcap)
+    codes = get_constituents(args.min_mktcap, args.small_player)
     if not codes:
         logger.error("筛选结果为空，请降低 --min-mktcap 阈值或检查数据源！")
         sys.exit(1)
