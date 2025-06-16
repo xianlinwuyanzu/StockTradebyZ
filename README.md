@@ -38,6 +38,7 @@ pip install -r requirements.txt
 
 ```bash
 python fetch_csi300_kline.py \
+  --small-player True            # 不包含创业板数据
   --min-mktcap 2.5e10 \          # 市值阈值（默认 250 亿）
   --start 20050101 \             # 起始日期
   --end today \                  # 结束日期
@@ -71,10 +72,11 @@ python select_stock.py \
 
 | 脚本                      | 关键参数              | 说明                                          |
 | ----------------------- | ----------------- | ------------------------------------------- |
-| `fetch_csi300_kline.py` | `--min-mktcap`    | 市值过滤阈值（元）。默认 2.5e10。 fileciteturn0file2  |
+| `fetch_csi300_kline.py` | `--small-player`  | 是否包含创业板数据。设为True则不包含创业板数据|
+|                         | `--min-mktcap`    | 市值过滤阈值（元）。默认 2.5e10。|
 |                         | `--start / --end` | 日期范围，格式 `YYYYMMDD`；`--end today` 自动取当前日期    |
 |                         | `--workers`       | 并发线程数，默认 20                                 |
-| `select_stock.py`       | `--date`          | 选股所用交易日；缺省时自动取数据中最新日期 fileciteturn0file3 |
+| `select_stock.py`       | `--date`          | 选股所用交易日；缺省时自动取数据中最新日期 |
 |                         | `--tickers`       | `all` 或逗号分隔股票代码列表，精细控制股票池                   |
 |                         | `--config`        | Selector 配置文件路径，默认 `configs.json`           |
 
@@ -86,7 +88,7 @@ python select_stock.py \
 
 | 参数               | 示例值  | 说明                                                                    |
 | ---------------- | ---- | --------------------------------------------------------------------- |
-| `threshold`      | `-5` | 日线 **J 值上限**。当当天 J < threshold 时满足条件，阈值越低要求越严格。 fileciteturn0file4 |
+| `threshold`      | `-5` | 日线 **J 值上限**。当当天 J < threshold 时满足条件，阈值越低要求越严格。|
 | `bbi_min_window` | `10` | 用于检测 **BBI 单调上升** 的最短窗口长度（交易日数）。                                      |
 | `bbi_offset_n`   | `8`  | 选定距今日 *n* 日的“锚点”作为 BBI 上升段的终点，可避免近期震荡。                                |
 | `max_window`     | `60` | 计算技术指标时最多读取的 K 线天数，限制窗口大小防止性能下降。                                      |
