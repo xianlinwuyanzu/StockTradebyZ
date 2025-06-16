@@ -59,7 +59,7 @@ def get_constituents(min_cap: float) -> List[str]:
     df = _get_mktcap_ak()
     cond = (
         (df["mktcap"] >= min_cap)
-        # & ~df["code"].str.startswith(("300", "301", "688", "8", "4"))
+        & ~df["code"].str.startswith(("300", "301", "688", "8", "4"))
     )
     codes = df.loc[cond, "code"].str.zfill(6).tolist()
     with open("appendix.json", 'r', encoding='utf-8') as f:
