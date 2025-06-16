@@ -14,12 +14,17 @@ import pandas as pd
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        # 将日志写入文件
+        logging.FileHandler("select_results.log", encoding="utf-8"),
+    ],
 )
 logger = logging.getLogger("select")
 
 
 # ---------- 工具 ----------
+
 def load_data(data_dir: Path, codes: Iterable[str]) -> Dict[str, pd.DataFrame]:
     frames: Dict[str, pd.DataFrame] = {}
     for code in codes:
@@ -71,6 +76,7 @@ def instantiate_selector(cfg: Dict[str, Any]):
 
 
 # ---------- 主函数 ----------
+
 def main():
     p = argparse.ArgumentParser(description="Run selectors defined in configs.json")
     p.add_argument("--data-dir", default="./data", help="CSV 行情目录")
@@ -100,9 +106,9 @@ def main():
         sys.exit(1)
 
     trade_date = (
-        pd.to_datetime(args.date)        
+        pd.to_datetime(args.date)
         if args.date
-        else max(df["date"].max() for df in data.values())        
+        else max(df["date"].max() for df in data.values())
     )
     if not args.date:
         logger.info("未指定 --date，使用最近日期 %s", trade_date.date())
@@ -112,20 +118,22 @@ def main():
 
     # --- 逐个 Selector 运行 ---
     for cfg in selector_cfgs:
-        if cfg["activate"] == False:
+        if cfg.get("activate", True) is False:
             continue
         try:
             alias, selector = instantiate_selector(cfg)
         except Exception as e:
             logger.error("跳过配置 %s：%s", cfg, e)
             continue
-        
+
         picks = selector.select(trade_date, data)
 
-        print("\n============== 选股结果 [%s] ==============" % alias)
-        print("交易日:", trade_date.date())
-        print("符合条件股票数:", len(picks))
-        print(", ".join(picks) if picks else "无符合条件股票")
+        # 将结果写入日志，同时输出到控制台
+        logger.info("")
+        logger.info("============== 选股结果 [%s] ==============", alias)
+        logger.info("交易日: %s", trade_date.date())
+        logger.info("符合条件股票数: %d", len(picks))
+        logger.info("%s", ", ".join(picks) if picks else "无符合条件股票")
 
 
 if __name__ == "__main__":
