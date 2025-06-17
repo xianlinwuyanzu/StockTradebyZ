@@ -37,7 +37,7 @@ pip install -r requirements.txt
 ### 2. 下载历史行情
 
 ```bash
-python fetch_csi300_kline.py \
+python fetch_kline.py \
   --small-player True            # 不包含创业板数据
   --min-mktcap 2.5e10 \          # 市值阈值（默认 250 亿）
   --start 20050101 \             # 起始日期
