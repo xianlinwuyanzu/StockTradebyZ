@@ -14,7 +14,7 @@
 
 | 名称 | 作用 |
 | ---- | ---- |
-| **`fetch_csi300_kline.py`** | 从 AkShare 实时快照筛选出总市值 ≥ 指定阈值且排除创业板的股票，抓取其历史日 K 线并保存为 CSV。支持多线程、增量更新和今日快照自动补齐。|
+| **`fetch_kline.py`** | 从 AkShare 实时快照筛选出总市值 ≥ 指定阈值且排除创业板的股票，抓取其历史日 K 线并保存为 CSV。支持多线程、增量更新和今日快照自动补齐。|
 | **`select_stock.py`** | 读取本地 CSV 行情，根据 `configs.json` 中定义的策略（Selector）进行批量选股，并把结果写入 `select_results.log` 和控制台。|
 
 默认内置Z哥少妇战法和补票战法的选股策略，文件位于 `Selector.py` 中：  
@@ -72,7 +72,7 @@ python select_stock.py \
 
 | 脚本                      | 关键参数              | 说明                                          |
 | ----------------------- | ----------------- | ------------------------------------------- |
-| `fetch_csi300_kline.py` | `--small-player`  | 是否包含创业板数据。设为True则不包含创业板数据|
+| `fetch_kline.py` | `--small-player`  | 是否包含创业板数据。设为True则不包含创业板数据|
 |                         | `--min-mktcap`    | 市值过滤阈值（元）。默认 2.5e10。|
 |                         | `--start / --end` | 日期范围，格式 `YYYYMMDD`；`--end today` 自动取当前日期    |
 |                         | `--workers`       | 并发线程数，默认 20                                 |
@@ -113,7 +113,7 @@ python select_stock.py \
 .
 ├── appendix.json            # 额外自选股票池（会与市值筛选结果合并）
 ├── configs.json             # Selector 运行时配置
-├── fetch_csi300_kline.py    # 历史行情抓取脚本
+├── fetch_kline.py    # 历史行情抓取脚本
 ├── select_stock.py          # 批量选股脚本
 ├── Selector.py              # 策略实现
 ├── data/                    # CSV 数据目录（运行后生成）
