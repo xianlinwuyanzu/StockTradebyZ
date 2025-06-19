@@ -121,16 +121,19 @@ class BBIKDJSelector:
             min_window=self.bbi_min_window,
             max_window=self.max_window,
         ):
+            
             return False
 
         # 2. 日线 J 值
         j_today = float(compute_kdj(hist).iloc[-1]["J"])
         if j_today >= self.threshold:
+            
             return False
 
         # 3. MACD 中 DIF>0
         hist["DIF"] = compute_dif(hist)
         if hist["DIF"].iloc[-1] <= 0:
+            
             return False
 
         return True
@@ -140,11 +143,11 @@ class BBIKDJSelector:
         self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]
     ) -> List[str]:
         picks: List[str] = []
-        for code, df in data.items():
+        for code, df in data.items():            
             hist = df[df["date"] <= date]
             if hist.empty:
                 continue
-            hist = hist.tail(self.max_window + self.bbi_offset_n + 5)  # 再多保留一点缓冲
+            hist = hist.tail(self.max_window + self.bbi_offset_n + 5)  # 再多保留一点缓冲            
             if self._passes_filters(hist):
                 picks.append(code)
         return picks
@@ -238,6 +241,100 @@ class BBIShortLongSelector:
                 + self.m
             )
             hist = hist.tail(max(need_len, self.max_window))
+            if self._passes_filters(hist):
+                picks.append(code)
+        return picks
+
+
+class BreakoutVolumeKDJSelector:
+    """
+    放量突破 + KDJ 选股器（更新版）
+
+    规则
+    ----
+    1. 指定日 T0：J < j_threshold
+    2. 在向前 offset 个交易日窗口内，存在某日 T 满足：
+       2.1  (close_T / close_{T-1} - 1) × 100 ≥ up_threshold          # 已是“较前一日涨幅”
+       2.2  数据区间内除 T 以外所有交易日的 volume ≤ volume_threshold × volume_T
+       2.3  J(T … T0-1) 全部 > j_threshold
+       2.4  close_T > 区间内 T 之前所有收盘价
+    """
+
+    def __init__(
+        self,
+        j_threshold: float = 0.0,
+        up_threshold: float = 3.0,
+        volume_threshold: float = 2.0 / 3,
+        offset: int = 15,
+        max_window: int = 120,
+    ) -> None:
+        self.j_threshold = j_threshold
+        self.up_threshold = up_threshold
+        self.volume_threshold = volume_threshold
+        self.offset = offset
+        self.max_window = max_window
+
+    # ---------- 单支股票过滤 ---------- #
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+
+        if len(hist) < self.offset + 2:           # 至少 offset+1 根K线及一根前序K线
+            return False
+
+        # 控制窗口长度
+        hist = hist.tail(self.max_window).copy()
+
+        # ---- 计算指标 ----
+        hist = compute_kdj(hist)
+        hist["pct_chg"] = hist["close"].pct_change() * 100   # 已按“较前一日”计算
+
+        # 1) 指定日 J
+        if hist["J"].iloc[-1] >= self.j_threshold:
+            return False
+
+        n = len(hist)
+        wnd_start = max(0, n - self.offset - 1)
+        last_idx = n - 1                                     # T0 索引
+
+        for t_idx in range(wnd_start, last_idx):             # 不含最后一天
+            
+            row = hist.iloc[t_idx]            
+
+            # 2.1 较前一日涨幅
+            if row["pct_chg"] < self.up_threshold:                
+                continue
+
+            # 2.2 区间内全局缩量：除 T 外所有 volume 均 ≤ vol_T × volume_threshold
+            vol_T = row["volume"]
+            if vol_T <= 0:                
+                continue
+            vols_except_T = hist["volume"].drop(index=hist.index[t_idx])
+            if not (vols_except_T <= self.volume_threshold * vol_T).all():                
+                continue
+
+            # 2.4 价格创新高
+            if not (row["close"] > hist["close"].iloc[:t_idx].max()):                
+                continue
+
+            # 2.3 J 高位持续
+            if not (hist["J"].iloc[t_idx:last_idx] > hist["J"].iloc[-1]-10).all():                
+                continue
+
+            # 成功找到符合条件的 T
+            return True
+
+        return False
+        
+    # ---------- 多股票批量 ---------- #
+    def select(
+        self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]
+    ) -> List[str]:
+
+        picks: List[str] = []
+        for code, df in data.items():
+            
+            hist = df[df["date"] <= date]
+            if hist.empty:
+                continue
             if self._passes_filters(hist):
                 picks.append(code)
         return picks
