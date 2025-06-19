@@ -249,15 +249,6 @@ class BBIShortLongSelector:
 class BreakoutVolumeKDJSelector:
     """
     放量突破 + KDJ 选股器（更新版）
-
-    规则
-    ----
-    1. 指定日 T0：J < j_threshold
-    2. 在向前 offset 个交易日窗口内，存在某日 T 满足：
-       2.1  (close_T / close_{T-1} - 1) × 100 ≥ up_threshold          # 已是“较前一日涨幅”
-       2.2  数据区间内除 T 以外所有交易日的 volume ≤ volume_threshold × volume_T
-       2.3  J(T … T0-1) 全部 > j_threshold
-       2.4  close_T > 区间内 T 之前所有收盘价
     """
 
     def __init__(
