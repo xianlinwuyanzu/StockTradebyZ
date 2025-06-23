@@ -1,6 +1,6 @@
 # Z哥少妇战法·补票战法·TePu 战法 Python 实战
 
-> **更新时间：2025-06-23** – 适配 *最新* `fetch_kline.py` / `select_stock.py` 版本（市值快照已移除，Tushare Token 从环境变量读取）。
+> **更新时间：2025-06-23** – 适配 *最新* `fetch_kline.py`版本。
 
 ---
 
