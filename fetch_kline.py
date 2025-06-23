@@ -55,14 +55,6 @@ def _get_mktcap_ak() -> pd.DataFrame:
     df["mktcap"] = pd.to_numeric(df["mktcap"], errors="coerce")
     return df
 
-
-def _save_snapshot(df: pd.DataFrame, snapshot_dir: Path) -> Path:
-    today_str = dt.date.today().strftime("%Y%m%d")
-    snap_path = snapshot_dir / f"snapshot_{today_str}.csv"
-    df.to_csv(snap_path, index=False)
-    logger.info("市值快照已保存至 %s", snap_path.resolve())
-    return snap_path
-
 # --------------------------- 股票池筛选 --------------------------- #
 
 def get_constituents(
@@ -307,7 +299,7 @@ def main():
 
     # ---------- Token 处理 ---------- #
     if args.datasource == "tushare":
-        ts_token = "***"  # 补充你自己的token
+        ts_token = os.getenv("***")
         ts.set_token(ts_token)
         global pro
         pro = ts.pro_api()
@@ -320,8 +312,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ---------- 市值快照 & 股票池 ---------- #
-    mktcap_df = _get_mktcap_ak()
-    _save_snapshot(mktcap_df, out_dir)
+    mktcap_df = _get_mktcap_ak()    
 
     codes_from_filter = get_constituents(
         args.min_mktcap,
