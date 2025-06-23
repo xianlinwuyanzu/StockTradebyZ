@@ -1,21 +1,43 @@
-# Z哥少妇战法·补票战法·TePu 战法 Python 实战
+# Z哥少妇战法·补票战法·TePu 战法 Python 实战
+
+> **更新时间：2025-06-23** – 适配 *最新* `fetch_kline.py` / `select_stock.py` 版本（市值快照已移除，Tushare Token 从环境变量读取）。
+
+---
+
+## 目录
+
+* [项目简介](#项目简介)
+* [快速上手](#快速上手)
+
+  * [安装依赖](#安装依赖)
+  * [Tushare Token（可选）](#tushare-token可选)
+  * [Mootdx 运行前置步骤](#mootdx-运行前置步骤)
+  * [下载历史行情](#下载历史行情)
+  * [运行选股](#运行选股)
+* [参数说明](#参数说明)
+
+  * [`fetch_kline.py`](#fetch_klinepy)
+
+    * [K 线频率编码](#k-线频率编码)
+  * [`select_stock.py`](#select_stockpy)
+  * [内置策略参数](#内置策略参数)
+
+    * [1. BBIKDJSelector（少妇战法）](#1-bbikdjselector少妇战法)
+    * [2. BBIShortLongSelector（补票战法）](#2-bbishortlongselector补票战法)
+    * [3. BreakoutVolumeKDJSelector（TePu 战法）](#3-breakoutvolumekdjselectortepu-战法)
+* [项目结构](#项目结构)
+* [免责声明](#免责声明)
 
 ---
 
 ## 项目简介
 
-本仓库提供两个核心脚本：
+| 名称                    | 功能简介                                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **`fetch_kline.py`**  | *按市值筛选* A 股股票，并抓取其**历史 K 线**保存为 CSV。支持 **AkShare / Tushare / Mootdx** 三大数据源，自动增量更新、多线程下载。*本版本不再保存市值快照*，每次运行实时拉取。 |
+| **`select_stock.py`** | 读取本地 CSV 行情，依据 `configs.json` 中的 **Selector** 定义批量选股，结果输出到 `select_results.log` 与控制台。                            |
 
-| 名称                    | 功能简介                                                                                                                    |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **`fetch_kline.py`**  | *按市值筛选* A 股股票，并抓取其**历史 K 线**保存为 CSV。支持 **AkShare / Tushare / Mootdx** 三大数据源，自动增量更新、多线程下载。|
-| **`select_stock.py`** | 读取本地 CSV 行情，依据 `configs.json` 中的 **Selector** 定义批量选股，结果输出到 `select_results.log` 与控制台。                                   |
-
-内置三套经典选股策略（见 `Selector.py`）：
-
-* **BBIKDJSelector**  → 「少妇战法」
-* **BBIShortLongSelector**  → 「补票战法」
-* **BreakoutVolumeKDJSelector**  → 「TePu 战法」
+内置策略（见 `Selector.py`）：**BBIKDJSelector**（少妇战法）、**BBIShortLongSelector**（补票战法）、**BreakoutVolumeKDJSelector**（TePu 战法）。
 
 ---
 
@@ -24,29 +46,55 @@
 ### 安装依赖
 
 ```bash
-# 建议使用 Python 3.10+ 并启用虚拟环境
+# 建议 Python 3.10+，并使用虚拟环境
 pip install -r requirements.txt
 ```
 
-> 关键依赖：`akshare`、`tushare`、`mootdx`、`pandas`、`tqdm` 等。
+> 主要依赖：`akshare`、`tushare`、`mootdx`、`pandas`、`tqdm` 等。
 
+### Tushare Token（可选）
+
+若选择 **Tushare** 作为数据源，请按以下步骤操作：
+
+1. **注册账号**
+   点击专属注册链接 [https://tushare.pro/register?reg=820660](https://tushare.pro/register?reg=820660) 完成注册。*通过该链接注册，我将获得 50 积分 – 感谢支持！*
+2. **开通基础权限**
+   登录后进入「**平台介绍 → 社区捐助**」，按提示捐赠 **200 元/年** 可解锁 Tushare 基础接口。
+3. **获取 Token**
+   打开个人主页，点击 **「接口 Token」**，复制生成的 Token。
+4. **填入代码**
+   在 `fetch_kline.py` 约 **第 302 行**：
+
+   ```python
+   ts_token = "***"  # ← 替换为你的 Token 
+   ```
+
+### Mootdx 运行前置步骤
+
+使用 **Mootdx** 数据源前，需先探测最快行情服务器一次：
+
+```bash
+python -m mootdx bestip -vv
+```
+
+脚本将保存最佳 IP，后续抓取更稳定。
 
 ### 下载历史行情
 
 ```bash
 python fetch_kline.py \
-  --datasource mootdx      # 数据源：mootdx / akshare / tushare
+  --datasource mootdx      # mootdx / akshare / tushare
   --frequency 4            # K 线频率编码（4 = 日线）
-  --exclude-gem True       # 排除创业板 / 科创板 / 北交所
-  --min-mktcap 5e9         # 最小总市值（元），默认 5e9
-  --max-mktcap +inf        # 最大总市值（元），默认无限制
+  --exclude-gem            # 排除创业板 / 科创板 / 北交所
+  --min-mktcap 5e9         # 最小总市值（元）
+  --max-mktcap +inf        # 最大总市值（元）
   --start 20200101         # 起始日期（YYYYMMDD 或 today）
   --end today              # 结束日期
   --out ./data             # 输出目录
   --workers 10             # 并发线程数
 ```
 
-*首次执行* 下载完整历史；后续运行脚本时自动 **增量更新**（仅补充缺失交易日）。
+*首跑* 下载完整历史；之后脚本会 **增量更新**。
 
 ### 运行选股
 
@@ -54,13 +102,13 @@ python fetch_kline.py \
 python select_stock.py \
   --data-dir ./data        # CSV 行情目录
   --config ./configs.json  # Selector 配置
-  --date 2025-06-21        # 交易日（缺省 = 最新一个交易日）
+  --date 2025-06-21        # 交易日（缺省 = 最新）
 ```
 
-控制台示例（TePu 战法）：
+示例输出：
 
 ```
-============== 选股结果 [TePu 战法] ===============
+============== 选股结果 [TePu 战法] ===============
 交易日: 2025-06-21
 符合条件股票数: 1
 600690
@@ -72,84 +120,80 @@ python select_stock.py \
 
 ### `fetch_kline.py`
 
-| 参数                  | 默认值 | 说明                                     |
-| ------------------- | -------- | -------------------------------------- |
-| `--datasource`      | `mootdx` | 选用数据源：`tushare` / `akshare` / `mootdx` |
-| `--frequency`       | `4`      | K 线频率编码（见下表）                           |
-| `--exclude-gem`     | `True`     | 为True则排除创业板（300/301）、科创板（688）、北交所（4/8 开头）    |
-| `--min-mktcap`      | `5e9`    | 最小总市值（元），含边界                           |
-| `--max-mktcap`      | `+inf`   | 最大总市值（元），含边界                           |
-| `--start` / `--end` | `today`  | 日期范围，`YYYYMMDD` 或 `today`              |
-| `--out`             | `./data` | 输出目录                                   |
-| `--workers`         | `10`     | 并发线程数                                  |
+| 参数                  | 默认值      | 说明                                   |
+| ------------------- | -------- | ------------------------------------ |
+| `--datasource`      | `mootdx` | 数据源：`tushare` / `akshare` / `mootdx` |
+| `--frequency`       | `4`      | K 线频率编码（下表）                          |
+| `--exclude-gem`     | flag     | 排除创业板/科创板/北交所                        |
+| `--min-mktcap`      | `5e9`    | 最小总市值（元）                             |
+| `--max-mktcap`      | `+inf`   | 最大总市值（元）                             |
+| `--start` / `--end` | `today`  | 日期范围，`YYYYMMDD` 或 `today`            |
+| `--out`             | `./data` | 输出目录                                 |
+| `--workers`         | `10`     | 并发线程数                                |
 
-#### K 线频率编码
+#### K 线频率编码
 
-|  编码 |  周期  | Mootdx 关键字 | 用途      |
-| :-: | :--: | :--------: | ------- |
-|  0  |  5 分 |    `5m`    | 高频 / 分时 |
-|  1  | 15 分 |    `15m`   | 高频      |
-|  2  | 30 分 |    `30m`   | 高频      |
-|  3  | 60 分 |    `1h`    | 波段      |
-|  4  |  日线  |    `day`   | ★ 常用    |
-|  5  |  周线  |   `week`   | 中长线     |
-|  6  |  月线  |    `mon`   | 中长线     |
-|  7  |  1 分 |    `1m`    | Tick    |
-|  8  |  1 分 |    `1m`    | 同上      |
-|  9  |  日线  |    `day`   | 备用      |
-|  10 |  季线  |   `3mon`   | 长周期     |
-|  11 |  年线  |   `year`   | 长周期     |
+|  编码 |  周期  | Mootdx 关键字 | 用途   |
+| :-: | :--: | :--------: | ---- |
+|  0  |  5 分 |    `5m`    | 高频   |
+|  1  | 15 分 |    `15m`   | 高频   |
+|  2  | 30 分 |    `30m`   | 高频   |
+|  3  | 60 分 |    `1h`    | 波段   |
+|  4  |  日线  |    `day`   | ★ 常用 |
+|  5  |  周线  |   `week`   | 中长线  |
+|  6  |  月线  |    `mon`   | 中长线  |
+|  7  |  1 分 |    `1m`    | Tick |
+|  8  |  1 分 |    `1m`    | Tick |
+|  9  |  日线  |    `day`   | 备用   |
+|  10 |  季线  |   `3mon`   | 长周期  |
+|  11 |  年线  |   `year`   | 长周期  |
 
 ### `select_stock.py`
 
-| 参数           | 默认值              | 说明                                 |
-| ------------ | ---------------- | ---------------------------------- |
-| `--data-dir` | `./data`         | CSV 行情目录，对应 `fetch_kline.py --out` |
-| `--config`   | `./configs.json` | Selector 配置文件                      |
-| `--date`     | 最新交易日            | 选股所用交易日                            |
-| `--tickers`  | `all`            | 指定股票池（逗号分隔）；`all` 表示使用全部本地 CSV     |
+| 参数           | 默认值              | 说明            |
+| ------------ | ---------------- | ------------- |
+| `--data-dir` | `./data`         | CSV 行情目录      |
+| `--config`   | `./configs.json` | Selector 配置文件 |
+| `--date`     | 最新交易日            | 选股日期          |
+| `--tickers`  | `all`            | 股票池（逗号分隔列表）   |
 
-> 其余参数请执行 `python select_stock.py --help` 查看。
+其他参数请执行 `python select_stock.py --help` 查看。
 
 ### 内置策略参数
 
-以下参数节选自 `configs.json`，可按需调整。
+> 参数位于 `configs.json`，以下仅列常用项。
 
 #### 1. BBIKDJSelector（少妇战法）
 
-| 参数                | 默认值   | 说明                            |
-| ----------------- | ----- | ----------------------------- |
-| `threshold`       | `-6`  | 当日 J 值上限（J < threshold）       |
-| `bbi_min_window`  | `17`  | BBI 持续上升的最短交易日数               |
-| `bbi_offset_n`    | `2`   | 选取距今日 *n* 日的锚点，过滤震荡           |
-| `max_window`      | `60`  | 技术指标最长窗口                      |
-| `price_range_pct` | `100` | 最近 *max\_window* 内收盘价波动上限 (%) |
-
-核心：**BBI 上行 + J 低位 + DIF>0**，辅以波动率过滤。
+| 参数                | 默认    | 说明         |
+| ----------------- | ----- | ---------- |
+| `threshold`       | `-6`  | 当日 J 值上限   |
+| `bbi_min_window`  | `17`  | BBI 上升最短天数 |
+| `bbi_offset_n`    | `2`   | 锚点偏移       |
+| `max_window`      | `60`  | 最大窗口       |
+| `price_range_pct` | `100` | 价格波动过滤 (%) |
 
 #### 2. BBIShortLongSelector（补票战法）
 
-| 参数               | 默认值  | 说明          |
-| ---------------- | ---- | ----------- |
-| `n_short`        | `3`  | 短期 RSV 窗口   |
-| `n_long`         | `21` | 长期 RSV 窗口   |
-| `m`              | `3`  | 判别区间长度      |
-| `bbi_min_window` | `5`  | BBI 上升段最短窗口 |
-| `bbi_offset_n`   | `0`  | BBI 锚点偏移    |
-| `max_window`     | `60` | 历史窗口        |
+| 参数               | 默认   | 说明     |
+| ---------------- | ---- | ------ |
+| `n_short`        | `3`  | 短 RSV  |
+| `n_long`         | `21` | 长 RSV  |
+| `m`              | `3`  | 判别窗口   |
+| `bbi_min_window` | `5`  | BBI 窗口 |
+| `bbi_offset_n`   | `0`  | 锚点偏移   |
+| `max_window`     | `60` | 最大窗口   |
 
-逻辑：短长 RSV 高位 + BBI 上升 + DIF>0，并要求短 RSV 曾跌破 20 形成“回抽”。
+#### 3. BreakoutVolumeKDJSelector（TePu 战法）
 
-#### 3. BreakoutVolumeKDJSelector（TePu 战法）
-
-| 参数                 | 默认       | 说明          |
-| ------------------ | -------- | ----------- |
-| `j_threshold`      | `1`      | 当日 J 值上限    |
-| `up_threshold`     | `3.0`    | 放量长阳涨幅 (%)  |
-| `volume_threshold` | `0.6667` | 缩量比例        |
-| `offset`           | `15`     | 放量窗口 (日)    |
-| `max_window`       | `60`     | 历史窗口        |
-| `price_range_pct`  | `100`    | 收盘价波动上限 (%) |
+| 参数                 | 默认       | 说明       |
+| ------------------ | -------- | -------- |
+| `j_threshold`      | `1`      | 当日 J 值上限 |
+| `up_threshold`     | `3.0`    | 放量涨幅 (%) |
+| `volume_threshold` | `0.6667` | 缩量比例     |
+| `offset`           | `15`     | 放量窗口 (日) |
+| `max_window`       | `60`     | 最大窗口     |
+| `price_range_pct`  | `100`    | 价格波动 (%) |
 
 ---
 
@@ -157,7 +201,7 @@ python select_stock.py \
 
 ```
 .
-├── appendix.json            # 额外股票池（与筛选结果合并）
+├── appendix.json            # 附加股票池
 ├── configs.json             # Selector 配置
 ├── fetch_kline.py           # 行情抓取脚本
 ├── select_stock.py          # 批量选股脚本
@@ -172,4 +216,4 @@ python select_stock.py \
 ## 免责声明
 
 * 本仓库仅供学习与技术研究之用，**不构成任何投资建议**。股市有风险，入市需审慎。
-* 致谢 **@Zettaranc** 在 Bilibili 的无私分享：[https://b23.tv/JxIOaNE](https://b23.tv/JxIOaNE)
+* 致谢 **@Zettaranc** 在 Bilibili 的无私分享：[https://b23.tv/JxIOaNE](https://b23.tv/JxIOaNE)
