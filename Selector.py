@@ -312,7 +312,7 @@ class BreakoutVolumeKDJSelector:
                 continue
 
             # 2.3 J 高位持续
-            if not (hist["J"].iloc[t_idx:last_idx] > self.j_threshold).all():
+            if not (hist["J"].iloc[t_idx:last_idx] > hist["J"].iloc[-1]-10).all():
                 continue
 
             return True
