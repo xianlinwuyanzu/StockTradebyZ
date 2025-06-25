@@ -99,6 +99,7 @@ python fetch_kline.py \
   --out ./data             # 输出目录
   --workers 10             # 并发线程数
 ```
+python fetch_kline.py  --datasource mootdx  --frequency 4     --exclude-gem      --min-mktcap 5e9     --max-mktcap +inf    --start 20200101      --end today      --out ./data    --workers 10
 
 *首跑* 下载完整历史；之后脚本会 **增量更新**。  
 
@@ -110,7 +111,7 @@ python select_stock.py \
   --config ./configs.json  # Selector 配置
   --date 2025-07-02        # 交易日（缺省 = 最新）
 ```
-
+python select_stock.py --data-dir ./data      --config ./configs.json  --date 2025-06-25
 示例输出：
 
 ```
