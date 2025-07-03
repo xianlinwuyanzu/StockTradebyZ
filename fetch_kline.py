@@ -368,7 +368,7 @@ def main():
 
     # ---------- Token 处理 ---------- #
     if args.datasource == "tushare":
-        ts_token = " "  # 填入你的token
+        ts_token = "745e967a0e097ad5f40c3f665fd81133bb4fcfd0fcdcb1908cc8fd06"  # 填入你的token
         ts.set_token(ts_token)
         global pro
         pro = ts.pro_api()
