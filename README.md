@@ -1,6 +1,6 @@
-# Z哥少妇战法·补票战法·TePu 战法 Python 实战
+# Z哥战法的Python实现
 
-> **更新时间：2025-06-27** – 适配最新 `configs.json` 与 `Selector.py`。
+> **更新时间：2025-07-03** – 增加填坑战法。
 
 ---
 
@@ -23,8 +23,9 @@
   * [内置策略参数](#内置策略参数)
 
     * [1. BBIKDJSelector（少妇战法）](#1-bbikdjselector少妇战法)
-    * [2. BBIShortLongSelector（补票战法）](#2-bbishortlongselector补票战法)
-    * [3. BreakoutVolumeKDJSelector（TePu 战法）](#3-breakoutvolumekdjselectortepu-战法)
+    * [2. PeakKDJSelector（填坑战法）](#2-peakkdjselector填坑战法)
+    * [3. BBIShortLongSelector（补票战法）](#3-bbishortlongselector补票战法)
+    * [4. BreakoutVolumeKDJSelector（TePu 战法）](#4-breakoutvolumekdjselectortepu-战法)
 * [项目结构](#项目结构)
 * [免责声明](#免责声明)
 
@@ -37,7 +38,12 @@
 | **`fetch_kline.py`**  | *按市值筛选* A 股股票，并抓取其**历史 K 线**保存为 CSV。支持 **AkShare / Tushare / Mootdx** 三大数据源，自动增量更新、多线程下载。*本版本不再保存市值快照*，每次运行实时拉取。 |
 | **`select_stock.py`** | 读取本地 CSV 行情，依据 `configs.json` 中的 **Selector** 定义批量选股，结果输出到 `select_results.log` 与控制台。                            |
 
-内置策略（见 `Selector.py`）：**BBIKDJSelector**（少妇战法）、**BBIShortLongSelector**（补票战法）、**BreakoutVolumeKDJSelector**（TePu 战法）。
+内置策略（见 `Selector.py`）：
+
+* **BBIKDJSelector**（少妇战法）
+* **PeakKDJSelector**（填坑战法）
+* **BBIShortLongSelector**（补票战法）
+* **BreakoutVolumeKDJSelector**（TePu 战法）
 
 ---
 
@@ -70,7 +76,7 @@ pip install -r requirements.txt
    ```
 
 ### Mootdx 运行前置步骤
-
+**注意，Mootdx下载的数据是未复权数据，会使选股结果存在偏差，请尽量使用Tushare**  
 使用 **Mootdx** 数据源前，需先探测最快行情服务器一次：
 
 ```bash
@@ -94,7 +100,7 @@ python fetch_kline.py \
   --workers 10             # 并发线程数
 ```
 
-*首跑* 下载完整历史；之后脚本会 **增量更新**。
+*首跑* 下载完整历史；之后脚本会 **增量更新**。  
 
 ### 运行选股
 
@@ -102,16 +108,16 @@ python fetch_kline.py \
 python select_stock.py \
   --data-dir ./data        # CSV 行情目录
   --config ./configs.json  # Selector 配置
-  --date 2025-06-26        # 交易日（缺省 = 最新）
+  --date 2025-07-02        # 交易日（缺省 = 最新）
 ```
 
 示例输出：
 
 ```
-============== 选股结果 [TePu 战法] ===============
-交易日: 2025-06-26
-符合条件股票数: 1
-600690
+============== 选股结果 [填坑战法] ===============
+交易日: 2025-07-02
+符合条件股票数: 2
+600690, 000333
 ```
 
 ---
@@ -157,11 +163,11 @@ python select_stock.py \
 | `--date`     | 最新交易日            | 选股日期          |
 | `--tickers`  | `all`            | 股票池（逗号分隔列表）   |
 
-其他参数请执行 `python select_stock.py --help` 查看。
+执行 `python select_stock.py --help` 获取更多高级参数与解释。
 
 ### 内置策略参数
 
-以下参数均来自 **`configs.json`**，可根据个人喜好自行调整。
+以下参数均来自 **`configs.json`**，可根据个人喜好自由调整。
 
 #### 1. BBIKDJSelector（少妇战法）
 
@@ -174,7 +180,17 @@ python select_stock.py \
 | `bbi_q_threshold` | `0.1`  | 允许 BBI 一阶差分为负的分位阈值（回撤容忍度）                           |
 | `j_q_threshold`   | `0.10` | 当日 **J** 值需 *不高于* 最近窗口内该分位数                         |
 
-#### 2. BBIShortLongSelector（补票战法）
+#### 2. PeakKDJSelector（填坑战法）
+
+| 参数               | 预设值    | 说明                                                              |
+| ---------------- | ------ | --------------------------------------------------------------- |
+| `j_threshold`    | `10`   | 当日 **J** 值必须 *小于* 该阈值                                           |
+| `max_window`     | `100`  | 参与检测的最大窗口（交易日）                                                  |
+| `fluc_threshold` | `0.03` | 当日收盘价与坑口的最大允许波动率                               |
+| `gap_threshold`  | `0.2`  | 要求坑口高于区间最低收盘价的幅度（`oc_prev > min_close × (1+gap_threshold)`） |
+| `j_q_threshold`  | `0.10` | 当日 **J** 值需 *不高于* 最近窗口内该分位数                                     |
+
+#### 3. BBIShortLongSelector（补票战法）
 
 | 参数                | 预设值   | 说明                      |
 | ----------------- | ----- | ----------------------- |
@@ -185,7 +201,7 @@ python select_stock.py \
 | `max_window`      | `60`  | 参与检测的最大窗口（交易日）          |
 | `bbi_q_threshold` | `0.2` | 允许 BBI 一阶差分为负的分位阈值      |
 
-#### 3. BreakoutVolumeKDJSelector（TePu 战法）
+#### 4. BreakoutVolumeKDJSelector（TePu 战法）
 
 | 参数                 | 预设值      | 说明                                                  |
 | ------------------ | -------- | --------------------------------------------------- |
@@ -193,7 +209,7 @@ python select_stock.py \
 | `j_q_threshold`    | `0.10`   | 当日 **J** 值需 *不高于* 最近窗口内该分位数                         |
 | `up_threshold`     | `3.0`    | 单日涨幅不低于该百分比，视为“突破”                                  |
 | `volume_threshold` | `0.6667` | 放量日成交量需 **≥ 1/(1−volume\_threshold)** 倍于窗口内其他任意日    |
-| `offset`           | `15`     | 向前回溯的突破窗口（交易日）                                      |
+| `offset`           | `15`     | 向前回溯的突破判定窗口（交易日）                                    |
 | `max_window`       | `60`     | 参与检测的最大窗口（交易日）                                      |
 | `price_range_pct`  | `0.5`    | 最近 *max\_window* 根 K 线内，收盘价最大波动不得超过此值（`high/low−1`） |
 
