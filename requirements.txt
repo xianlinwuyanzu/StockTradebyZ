@@ -5,3 +5,4 @@ optuna==4.4.0
 pandas==2.3.0
 tqdm==4.66.4
 tushare==1.4.21
+scipy==1.14.1
