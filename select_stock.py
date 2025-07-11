@@ -10,6 +10,10 @@ from typing import Any, Dict, Iterable, List
 import os
 import tushare as ts
 import pandas as pd
+import pywencai as wc
+import akshare as ak
+import time
+import requests
 
 # ---------- 日志 ----------
 logging.basicConfig(
@@ -74,6 +78,97 @@ def instantiate_selector(cfg: Dict[str, Any]):
 
     params = cfg.get("params", {})
     return cfg.get("alias", cls_name), cls(**params)
+    
+def get_pool_ak(target_concept: list) -> list:
+    """通过AKShare获取概念标签（兼容东方财富/同花顺双数据源）"""
+    # code_short = stock_code[:6]  # 去除市场后缀
+    # concepts = set()
+    file_path = Path('./datas/pool_ak.json')
+    if file_path.exists():
+        print("使用本地数据pool_ak")
+        with open('pool_th.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
+
+    codes = []
+    stock_board_concept_name_em_df = ak.stock_board_concept_name_em()
+    concepts_all = stock_board_concept_name_em_df['板块名称'].tolist()
+    # with open('ak_concepts_all.json', "w", encoding="utf-8") as f:
+    #     json.dump(concepts_all, f, ensure_ascii=False, indent=4)
+    for ban in target_concept:
+        if not ban in concepts_all:
+            continue
+        stock_board_concept_cons_em_df = ak.stock_board_concept_cons_em(symbol=ban)
+        codes.append(stock_board_concept_cons_em_df['代码'].tolist())
+    file_path = Path('./datas/pool_ak.json')
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(codes, f, ensure_ascii=False, indent=4)
+    return codes
+
+
+def get_stocks_by_concept(code, name):
+    """获取指定概念指数下的成分股数据"""
+    url = f"https://d.10jqka.com.cn/v2/blockrank/{code}/199112/d1000.js"
+    headers = {
+        'Referer': 'http://q.10jqka.com.cn/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+    }
+    
+    try:
+        # print(f"正在获取 {name}({code}) 的成分股...")
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            json_str = response.text.split('(', 1)[1].rsplit(')', 1)[0]
+            data = json.loads(json_str)
+            
+            stock_list = data.get('items', [])
+            if stock_list:
+                # 只提取需要的字段，不再处理价格和涨跌幅
+                stocks_df = pd.DataFrame(
+                    [(s.get('5', '').zfill(6),
+                      s.get('55', ''),
+                      name)  # 直接使用概念名称
+                     for s in stock_list],
+                    columns=['股票代码', '股票名称', '所属概念']
+                )
+                return stocks_df
+            print(f"警告: {name}({code}) 未找到成分股数据")
+            return pd.DataFrame(columns=['所属概念','股票代码', '股票名称' ])
+        print(f"错误: 获取 {name}({code}) 数据失败，状态码: {response.status_code}")
+        return None
+    except Exception as e:
+        print(f"错误: 获取 {name}({code}) 数据时发生异常: {str(e)}")
+        return None
+def get_pool_th(target_concepts):
+    file_path = Path('./datas/pool_th.json')
+    if file_path.exists():
+        print("使用本地数据pool_th")
+        with open('pool_th.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
+    indexs = wc.get(query="同花顺概念指数", query_type="zhishu", sort_order='desc', loop=True)
+    # 获取所有概念指数
+    # 用于存储所有成分股的列表
+    th_pool = []
+    # 遍历每个概念指数获取成分股
+    for idx, row in indexs.iterrows():
+        code = row['code']
+        name = row['指数简称']
+        if not name in target_concepts:
+            continue
+        # 获取成分股
+        stocks_df = get_stocks_by_concept(code, name)
+        if stocks_df is not None and not stocks_df.empty:
+            th_pool.append([stocks_df['股票代码'].tolist()])
+            res = [item for sublist in th_pool for item in sublist]
+            print("get concept: ", name)
+    file_path = Path('./datas/pool_th.json')
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(res[0], f, ensure_ascii=False, indent=4)
+    return res[0]
 
 def zpool(codes):
     # 从当前目录下的 config.json 读取配置
@@ -91,7 +186,8 @@ def zpool(codes):
         print(f"警告：配置文件 {config_path} 不存在，使用默认配置")
         target_industries = []
         target_concepts = ['人工智能', '风电']
-
+    th_pool = get_pool_th(target_concepts)
+    ak_pool = get_pool_ak(target_concepts)
     # 初始化Tushare Pro接口
     ts.set_token('745e967a0e097ad5f40c3f665fd81133bb4fcfd0fcdcb1908cc8fd06')  # 替换为你的Token
     pro = ts.pro_api()
@@ -99,10 +195,14 @@ def zpool(codes):
     # 1. 概念板块池子过滤
     concepts_results = {}
     codes_res = []
+    print(th_pool,ak_pool)
     for code in codes:
-        # 格式转换：纯数字 -> Tushare标准格式
+        #1. 使用akshare接口 和 同花顺接口 判断是否符合池子
+        if code in ak_pool or code in th_pool:
+            codes_res.append(code)
+            continue
+        #2. 使用tushare接口判断是否符合池子
         ts_code = f"{code}.SH" if str(code).startswith(('6', '9')) else f"{code}.SZ"
-        
         try:
             # 获取该股票的所有概念标签
             df = pro.concept_detail(ts_code=ts_code)
@@ -113,8 +213,6 @@ def zpool(codes):
             concepts_results[code] = []
         if concepts_results[code]:
             codes_res.append(code)
-        else:
-            print("code not in zpool concepts:", code)
 
     # 2. 行业板块池子过滤
     results = []
