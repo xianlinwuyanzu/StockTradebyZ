@@ -86,7 +86,7 @@ def get_pool_ak(target_concept: list) -> list:
     file_path = Path('./datas/pool_ak.json')
     if file_path.exists():
         print("使用本地数据pool_ak")
-        with open('pool_th.json', 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return data
 
@@ -145,7 +145,7 @@ def get_pool_th(target_concepts):
     file_path = Path('./datas/pool_th.json')
     if file_path.exists():
         print("使用本地数据pool_th")
-        with open('pool_th.json', 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return data
     indexs = wc.get(query="同花顺概念指数", query_type="zhishu", sort_order='desc', loop=True)
@@ -195,7 +195,6 @@ def zpool(codes):
     # 1. 概念板块池子过滤
     concepts_results = {}
     codes_res = []
-    print(th_pool,ak_pool)
     for code in codes:
         #1. 使用akshare接口 和 同花顺接口 判断是否符合池子
         if code in ak_pool or code in th_pool:
