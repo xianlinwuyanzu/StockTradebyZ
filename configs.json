@@ -72,6 +72,20 @@
         "ma60_slope_days": 5,
         "max_window": 120        
       }
+    },
+    {
+      "class": "BigBullishVolumeSelector",
+      "alias": "暴力K战法",
+      "activate": true,
+      "params": {
+        "up_pct_threshold": 0.06,
+        "upper_wick_pct_max": 0.02,            
+        "require_bullish_close": true,
+        "close_lt_zxdq_mult": 1.15,
+        "vol_lookback_n": 20,
+        "vol_multiple": 2.5
+      }
     }
   ]
 }
+
