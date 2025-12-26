@@ -1,11 +1,8 @@
 # Z哥战法的 Python 实现（更新版）
 
-> **更新时间：2025-09-10** –
+> **更新时间：2025-12-26** –
 >
-> 1. 重构 `fetch_kline.py`：仅使用 **Tushare 日线（前复权 qfq）**、从 **`stocklist.csv`** 读取股票池、支持排除板块（创业板/科创板/北交所），抓取为**全量覆盖保存**；
-> 2. `Selector.py`：删除 **TePu 战法**，新增/强化统一日内过滤与“知行短/长线”约束；
-> 3. `configs.json` 已同步新参数与默认值；
-> 4. 新增 **“统一当日过滤&知行约束”** 说明章节。
+> 新增 **BigBullishVolumeSelector（暴力K战法）**：用于捕捉放量启动、贴近短线均值的强势阳线；
 
 ---
 
@@ -31,6 +28,8 @@
   * [3. BBIShortLongSelector（补票战法）](#3-bbishortlongselector补票战法)
   * [4. PeakKDJSelector（填坑战法）](#4-peakkdjselector填坑战法)
   * [5. MA60CrossVolumeWaveSelector（上穿60放量战法）](#5-ma60crossvolumewaveselector上穿60放量战法)
+  * [6. BigBullishVolumeSelector（暴力K战法）](#6-bigbullishvolumeselector暴力k战法)
+
 * [项目结构](#项目结构)
 * [常见问题](#常见问题)
 * [免责声明](#免责声明)
@@ -293,6 +292,57 @@ python select_stock.py \
 ```
 
 > **已移除**：`BreakoutVolumeKDJSelector（TePu 战法）`。
+
+### 6. BigBullishVolumeSelector（暴力K战法）
+
+核心逻辑：
+
+1. **当日为长阳**：  
+   当日涨幅 `(close / prev_close - 1)` **大于 `up_pct_threshold`**；
+
+2. **上影线短**：  
+   上影线比例  
+   \[
+   \frac{High - \max(Open, Close)}{\max(Open, Close)}
+   \]
+   **小于 `upper_wick_pct_max`**，用于过滤冲高回落型假阳线；
+
+3. **放量突破**：  
+   当日成交量  
+   \[
+   Volume_{today} \ge vol\_multiple \times \text{前 } n \text{ 日均量}
+   \]
+
+4. **贴近知行短线（不过热）**：  
+   计算 `ZXDQ = EMA(EMA(C,10),10)`，要求  
+   \[
+   Close < ZXDQ \times close\_lt\_zxdq\_mult
+   \]  
+   用于过滤已经明显脱离短线均值、过度加速的股票。
+
+5. （可选）**收阳约束**：`close ≥ open`。
+
+该策略意在捕捉：
+> **“刚刚放量启动的强势阳线，但尚未远离短期均线、仍具延续空间的个股”。**
+
+---
+
+`configs.json` 预设：
+
+```json
+{
+  "class": "BigBullishVolumeSelector",
+  "alias": "暴力K战法",
+  "activate": true,
+  "params": {
+    "up_pct_threshold": 0.06,
+    "upper_wick_pct_max": 0.02,
+    "require_bullish_close": true,
+    "close_lt_zxdq_mult": 1.15,
+    "vol_lookback_n": 20,
+    "vol_multiple": 2.5
+  }
+}
 
 ---
 
