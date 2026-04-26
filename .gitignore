@@ -1,0 +1,9 @@
+*.txt
+*.csv
+*.log
+*.bak
+*.tmp
+*.json
+*.js
+__pycache__/
+node_modules/

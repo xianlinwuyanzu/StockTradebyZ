@@ -79,13 +79,7 @@ export TUSHARE_TOKEN=你的token
 ### 下载历史 K 线（qfq，日线）
 
 ```bash
-python fetch_kline.py \
-  --start 20240101 \
-  --end today \
-  --stocklist ./stocklist.csv \
-  --exclude-boards gem star bj \
-  --out ./data \
-  --workers 6
+  python fetch_kline.py 
 ```
 
 * **数据源固定**：Tushare 日线，**前复权 qfq**。
@@ -99,6 +93,7 @@ python select_stock.py \
   --data-dir ./data \
   --config ./configs.json \
   --date 2025-09-10
+  python select_stock.py --data-dir ./data/us_stocks     --config ./configs.json
 ```
 
 > `--date` 可省略，默认取数据中的最后交易日。
