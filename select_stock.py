@@ -79,7 +79,7 @@ def instantiate_selector(cfg: Dict[str, Any]):
 
 def main():
     p = argparse.ArgumentParser(description="Run selectors defined in configs.json")
-    p.add_argument("--data-dir", default="./data", help="CSV 行情目录")
+    p.add_argument("--data-dir", default="./data/us_stocks", help="CSV 行情目录")
     p.add_argument("--config", default="./configs.json", help="Selector 配置文件")
     p.add_argument("--date", help="交易日 YYYY-MM-DD；缺省=数据最新日期")
     p.add_argument("--tickers", default="all", help="'all' 或逗号分隔股票代码列表")

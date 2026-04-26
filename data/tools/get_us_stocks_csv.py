@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+import yfinance as yf
+from yfinance.screener import screen
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,21 +94,46 @@ def get_nasdaq100() -> pd.DataFrame:
     raise ValueError("未在维基百科页面找到纳斯达克100成分股表格")
 
 
+def get_most_actives(count: int = 100) -> pd.DataFrame:
+    """
+    通过 yfinance screener 获取当日成交量最活跃的前 N 只股票。
+    接口：yfinance.screener.screen('most_actives')
+    返回字段：symbol, longName, region
+    """
+    logger.info("获取最活跃股票 Top%d（yfinance screener）...", count)
+    result = screen("most_actives", count=count)
+    quotes = result.get("quotes", [])
+    if not quotes:
+        logger.warning("most_actives 返回空列表")
+        return pd.DataFrame(columns=["ts_code", "symbol", "name", "area", "industry"])
+
+    rows = pd.DataFrame({
+        "ts_code":  [q["symbol"] for q in quotes],
+        "symbol":   [q["symbol"] for q in quotes],
+        "name":     [q.get("longName") or q.get("shortName") or q["symbol"] for q in quotes],
+        "area":     [q.get("region", "US") for q in quotes],
+        "industry": "Unknown",   # screener 不返回行业字段
+    })
+    logger.info("最活跃股票: %d 只", len(rows))
+    return rows
+
+
 def main() -> None:
-    sp500_df   = get_sp500()
-    nasdaq_df  = get_nasdaq100()
+    sp500_df      = get_sp500()
+    nasdaq_df     = get_nasdaq100()
+    actives_df    = get_most_actives(count=100)
 
     merged = (
-        pd.concat([sp500_df, nasdaq_df], ignore_index=True)
-        .drop_duplicates(subset=["ts_code"], keep="first")   # 标普500数据优先（含行业）
+        pd.concat([sp500_df, nasdaq_df, actives_df], ignore_index=True)
+        .drop_duplicates(subset=["ts_code"], keep="first")
         .reset_index(drop=True)
     )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     merged.to_csv(OUT_FILE, index=False)
     logger.info(
-        "完成：标普500=%d，纳斯达克100=%d，合并去重=%d → %s",
-        len(sp500_df), len(nasdaq_df), len(merged), OUT_FILE,
+        "完成：标普500=%d，纳斯达克100=%d，最活跃=%d，合并去重=%d → %s",
+        len(sp500_df), len(nasdaq_df), len(actives_df), len(merged), OUT_FILE,
     )
 
 

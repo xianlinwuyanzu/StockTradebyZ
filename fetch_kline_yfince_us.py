@@ -244,7 +244,7 @@ def load_stock_list(stocklist_path: Path) -> List[str]:
 # --------------------------- 主程序 --------------------------- #
 def main():
     parser = argparse.ArgumentParser(description="批量下载美股日线数据")
-    parser.add_argument("--stocklist", type=Path, default="./data/tools/stocklist_us_test.csv", 
+    parser.add_argument("--stocklist", type=Path, default="./data/tools/stocklist_us_20260426.csv", 
                        help="股票列表CSV文件路径")
     parser.add_argument("--out", type=Path, default="./data/us_stocks", 
                        help="输出目录")
@@ -278,6 +278,7 @@ def main():
     total_batches = (len(all_tickers) - 1) // args.batch_size + 1
     success_count = 0
     fail_count = 0
+    failed_tickers: List[str] = []
     
     for batch_idx in range(0, len(all_tickers), args.batch_size):
         batch_num = batch_idx // args.batch_size + 1
@@ -316,12 +317,15 @@ def main():
                         success_count += 1
                     else:
                         fail_count += 1
+                        failed_tickers.append(ticker)
                 else:
                     logger.warning(f"{ticker}: 不在返回数据中")
                     fail_count += 1
+                    failed_tickers.append(ticker)
         else:
             logger.warning(f"批次 {batch_num} 无数据，全部标记为失败")
             fail_count += len(batch_tickers)
+            failed_tickers.extend(batch_tickers)
         
         # 5. 批次间隔（滑动窗口限速已内置节流，此处仅保留小抖动防指纹）
         if batch_num < total_batches:
@@ -335,6 +339,12 @@ def main():
     logger.info(f"失败: {fail_count} 只")
     logger.info(f"总计: {len(all_tickers)} 只")
     logger.info(f"数据保存至: {args.out.resolve()}")
+
+    if failed_tickers:
+        print(f"\n{'='*50}")
+        print(f"❌ 下载失败的股票（共 {len(failed_tickers)} 只）：")
+        print(', '.join(failed_tickers))
+        print('='*50)
 
 if __name__ == "__main__":
     main()
