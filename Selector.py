@@ -56,6 +56,44 @@ def compute_dif(df: pd.DataFrame, fast: int = 12, slow: int = 26) -> pd.Series:
     return ema_fast - ema_slow
 
 
+def compute_tdx_sma(series: pd.Series, n: int, m: int) -> pd.Series:
+    """
+    计算通达信 SMA(X, N, M)（递推平滑，不是简单均线）。
+    等价写法：EMA(alpha=M/N, adjust=False)。
+    """
+    if n <= 0:
+        raise ValueError("n 必须 > 0")
+    if m <= 0 or m > n:
+        raise ValueError("m 必须满足 0 < m <= n")
+    return series.astype(float).ewm(alpha=m / n, adjust=False).mean()
+
+
+def cross_up(a: pd.Series, b: pd.Series) -> pd.Series:
+    """CROSS(a,b): 当日上穿。"""
+    return ((a > b) & (a.shift(1) <= b.shift(1))).fillna(False)
+
+
+def ref_prev_cross_value(series: pd.Series, cross_sig: pd.Series) -> pd.Series:
+    """
+    对每个时点，返回“上一笔同类 cross 发生时”的 series 值。
+    若不存在上一笔 cross，则返回 NaN。
+    """
+    n = len(series)
+    if n == 0:
+        return pd.Series(dtype=float)
+
+    pos = np.arange(n, dtype=float)
+    cross_pos = pd.Series(np.where(cross_sig.to_numpy(), pos, np.nan), index=series.index)
+    prev_pos = cross_pos.shift(1).ffill()
+
+    out = pd.Series(np.nan, index=series.index, dtype=float)
+    valid = prev_pos.notna()
+    if valid.any():
+        idx = prev_pos[valid].astype(int).to_numpy()
+        out.loc[valid] = series.astype(float).to_numpy()[idx]
+    return out
+
+
 def bbi_deriv_uptrend(
     bbi: pd.Series,
     *,
@@ -966,6 +1004,110 @@ class BigBullishVolumeSelector:
                 continue
             hist = df[df["date"] <= date].tail(need_len)
             if len(hist) < need_len:
+                continue
+            if self._passes_filters(hist):
+                picks.append(code)
+
+        return picks
+
+
+class BBDMomentumSignalSelector:
+    """
+    基于通达信指标的买点选股器。
+
+    当日出现以下任一启用信号即入选：
+    1) BBD 金叉
+    2) 动能金叉
+    3) B 底背（BBD 底背离）
+    4) 动底背（动能线底背离）
+    """
+
+    def __init__(
+        self,
+        *,
+        max_window: int = 240,
+        use_bbd_golden_cross: bool = True,
+        use_momentum_golden_cross: bool = True,
+        use_bbd_bottom_divergence: bool = True,
+        use_momentum_bottom_divergence: bool = True,
+    ) -> None:
+        if max_window < 30:
+            raise ValueError("max_window 应 >= 30")
+
+        self.max_window = max_window
+        self.use_bbd_golden_cross = bool(use_bbd_golden_cross)
+        self.use_momentum_golden_cross = bool(use_momentum_golden_cross)
+        self.use_bbd_bottom_divergence = bool(use_bbd_bottom_divergence)
+        self.use_momentum_bottom_divergence = bool(use_momentum_bottom_divergence)
+
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+        required_cols = {"open", "high", "low", "close"}
+        if hist.empty or not required_cols.issubset(hist.columns):
+            return False
+
+        hist = hist.sort_values("date").copy()
+        if len(hist) < 30:
+            return False
+
+        close = hist["close"].astype(float)
+        high = hist["high"].astype(float)
+        low = hist["low"].astype(float)
+
+        # --- 指标主干 ---
+        al = (close + low + high) / 3.0
+        ao = compute_tdx_sma(al, 5, 1) - compute_tdx_sma(al, 13, 1)
+        bbd = (ao - compute_tdx_sma(ao, 3, 1)) * 100.0
+
+        momentum_line = ao * 10.0
+        momentum_aux = ao.ewm(span=5, adjust=False).mean() * 10.0
+        bbd_support = compute_tdx_sma(bbd, 5, 2)
+
+        # --- 金叉/死叉 ---
+        bbd_cross_up = cross_up(bbd, bbd_support)
+        dyn_cross_up = cross_up(momentum_line, momentum_aux)
+
+        # --- 底背离（与公式 SV1A / SV3A 对齐） ---
+        prev_close_at_bbd_cross = ref_prev_cross_value(close, bbd_cross_up)
+        prev_bbd_at_bbd_cross = ref_prev_cross_value(bbd, bbd_cross_up)
+        bbd_bottom_div = (
+            bbd_cross_up
+            & prev_close_at_bbd_cross.notna()
+            & prev_bbd_at_bbd_cross.notna()
+            & (prev_close_at_bbd_cross > close)
+            & (bbd > prev_bbd_at_bbd_cross)
+        )
+
+        prev_close_at_dyn_cross = ref_prev_cross_value(close, dyn_cross_up)
+        prev_dyn_at_dyn_cross = ref_prev_cross_value(momentum_line, dyn_cross_up)
+        momentum_bottom_div = (
+            dyn_cross_up
+            & prev_close_at_dyn_cross.notna()
+            & prev_dyn_at_dyn_cross.notna()
+            & (prev_close_at_dyn_cross > close)
+            & (momentum_line > prev_dyn_at_dyn_cross)
+        )
+
+        buy_sig = pd.Series(False, index=hist.index)
+        if self.use_bbd_golden_cross:
+            buy_sig = buy_sig | bbd_cross_up
+        if self.use_momentum_golden_cross:
+            buy_sig = buy_sig | dyn_cross_up
+        if self.use_bbd_bottom_divergence:
+            buy_sig = buy_sig | bbd_bottom_div
+        if self.use_momentum_bottom_divergence:
+            buy_sig = buy_sig | momentum_bottom_div
+
+        return bool(buy_sig.iloc[-1])
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        picks: List[str] = []
+        need_len = max(30, self.max_window)
+
+        for code, df in data.items():
+            if df is None or df.empty:
+                continue
+            hist = df[df["date"] <= date].tail(need_len)
+            if len(hist) < 30:
                 continue
             if self._passes_filters(hist):
                 picks.append(code)

@@ -85,6 +85,18 @@
         "vol_lookback_n": 20,
         "vol_multiple": 2.5
       }
+    },
+    {
+      "class": "BBDMomentumSignalSelector",
+      "alias": "主任抄底战法",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "use_bbd_golden_cross": true,
+        "use_momentum_golden_cross": true,
+        "use_bbd_bottom_divergence": true,
+        "use_momentum_bottom_divergence": true
+      }
     }
   ]
 }
