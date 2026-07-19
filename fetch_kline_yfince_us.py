@@ -8,7 +8,7 @@ import sys
 import time
 import warnings
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 import os
 
 import pandas as pd
@@ -36,7 +36,7 @@ MAX_RETRIES = 3                    # 失败重试次数
 TIMEOUT = 30                       # 单次请求超时（秒）
 
 # 增量更新：跳过已有且足够新的文件
-SKIP_IF_FRESH_DAYS = 1             # CSV 文件在 N 天内更新过则跳过（0=禁用）
+SKIP_IF_FRESH_DAYS = 0.5             # CSV 文件在 N 天内更新过则跳过（0=禁用）
 
 # 全局滑动窗口限速：每分钟最多发出的批次请求数
 RATE_LIMIT_CALLS = 8               # 每窗口允许的最大批次数
@@ -44,6 +44,7 @@ RATE_LIMIT_WINDOW = 60             # 窗口大小（秒）
 
 # 滑动窗口限速器（模块级单例）
 _call_timestamps: collections.deque = collections.deque()
+PROFILE_FALLBACK = "Unknown"
 
 # 日志配置
 logging.basicConfig(
@@ -83,6 +84,154 @@ def _is_fresh(path: Path) -> bool:
         return False
     age_days = (time.time() - path.stat().st_mtime) / 86400
     return age_days < SKIP_IF_FRESH_DAYS
+
+
+def _normalize_ticker(code: str) -> str:
+    """统一股票代码格式（用于下载与元数据映射）。"""
+    if code is None:
+        return ""
+    s = str(code).strip().upper()
+    if not s or s in {"UNKNOWN", "NAN", "NONE", "NULL"}:
+        return ""
+    return s.replace(".", "-")
+
+
+def _clean_profile_value(value: object) -> str:
+    """清洗行业字段，统一为可落盘字符串。"""
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        text = value.strip()
+    elif isinstance(value, (list, tuple, set)):
+        text = "|".join(str(v).strip() for v in value if str(v).strip())
+    elif isinstance(value, dict):
+        # 部分来源可能是对象结构，优先抽取 name。
+        text = str(value.get("name") or value.get("raw") or "").strip()
+    else:
+        text = str(value).strip()
+
+    if not text:
+        return ""
+
+    if text.lower() in {"nan", "none", "null", "n/a", "unknown"}:
+        return ""
+    return text
+
+
+def load_profile_seed(stocklist_path: Path) -> Dict[str, Dict[str, str]]:
+    """
+    尝试从股票列表文件中加载 sector/industry，减少额外网络请求。
+    返回：{TICKER: {"sector": ..., "industry": ...}}
+    """
+    try:
+        df = pd.read_csv(stocklist_path)
+    except Exception as e:
+        logger.warning(f"读取股票列表元数据失败（将回退到 yfinance）：{e}")
+        return {}
+
+    symbol_col = None
+    for col in ["ts_code", "symbol", "ticker", "code", "Symbol"]:
+        if col in df.columns:
+            symbol_col = col
+            break
+    if symbol_col is None:
+        if len(df.columns) == 0:
+            return {}
+        symbol_col = df.columns[0]
+
+    sector_col = None
+    for col in ["sector", "Sector", "gics_sector", "industry_sector"]:
+        if col in df.columns:
+            sector_col = col
+            break
+
+    industry_col = None
+    for col in ["industry", "Industry", "gics_industry", "gics_sub_industry"]:
+        if col in df.columns:
+            industry_col = col
+            break
+
+    if sector_col is None and industry_col is None:
+        return {}
+
+    seed: Dict[str, Dict[str, str]] = {}
+    for _, row in df.iterrows():
+        ticker = _normalize_ticker(row.get(symbol_col, ""))
+        if not ticker:
+            continue
+
+        sector = _clean_profile_value(row.get(sector_col, "")) if sector_col else ""
+        industry = _clean_profile_value(row.get(industry_col, "")) if industry_col else ""
+        if not sector and not industry:
+            continue
+
+        seed[ticker] = {
+            "sector": sector or PROFILE_FALLBACK,
+            "industry": industry or PROFILE_FALLBACK,
+        }
+
+    if seed:
+        logger.info(f"从 stocklist 预加载到 {len(seed)} 条行业映射")
+    return seed
+
+
+def fetch_ticker_profile(
+    ticker: str,
+    seed_profile: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """
+    获取单只股票行业信息，优先用 seed，不足时回退到 yfinance。
+    """
+    profile = {
+        "sector": PROFILE_FALLBACK,
+        "industry": PROFILE_FALLBACK,
+    }
+
+    if seed_profile:
+        sector = _clean_profile_value(seed_profile.get("sector", ""))
+        industry = _clean_profile_value(seed_profile.get("industry", ""))
+        if sector:
+            profile["sector"] = sector
+        if industry:
+            profile["industry"] = industry
+
+    need_remote = (
+        profile["sector"] == PROFILE_FALLBACK
+        or profile["industry"] == PROFILE_FALLBACK
+    )
+    if not need_remote:
+        return profile
+
+    try:
+        t = yf.Ticker(ticker)
+        try:
+            info = t.get_info() or {}
+        except Exception:
+            # 兼容部分版本/环境下 get_info 不稳定的情况
+            info = t.info or {}
+
+        if isinstance(info, dict):
+            if profile["sector"] == PROFILE_FALLBACK:
+                s = _clean_profile_value(
+                    info.get("sector")
+                    or info.get("sectorDisp")
+                    or info.get("category")
+                )
+                if s:
+                    profile["sector"] = s
+
+            if profile["industry"] == PROFILE_FALLBACK:
+                i = _clean_profile_value(
+                    info.get("industry")
+                    or info.get("industryDisp")
+                )
+                if i:
+                    profile["industry"] = i
+    except Exception as e:
+        logger.debug(f"{ticker}: 拉取行业信息失败，使用默认值。原因: {e}")
+
+    return profile
 
 
 # --------------------------- 核心函数 --------------------------- #
@@ -137,7 +286,12 @@ def download_batch(tickers: List[str]) -> Dict[str, pd.DataFrame]:
             logger.warning(f"批次 {tickers[0]}... 下载失败: {error_msg}")
             return {}
 
-def process_and_save_data(ticker: str, df: pd.DataFrame, output_dir: Path) -> bool:
+def process_and_save_data(
+    ticker: str,
+    df: pd.DataFrame,
+    output_dir: Path,
+    profile: Optional[Dict[str, str]] = None,
+) -> bool:
     """
     处理和保存单只股票数据
     """
@@ -176,9 +330,14 @@ def process_and_save_data(ticker: str, df: pd.DataFrame, output_dir: Path) -> bo
         
         # 去重和排序
         df = df.drop_duplicates(subset='date').sort_values('date').reset_index(drop=True)
+
+        # 统一追加行业字段（每个交易日重复同一标签，便于按票回读时直接可用）
+        profile = profile or {}
+        df['sector'] = _clean_profile_value(profile.get('sector', '')) or PROFILE_FALLBACK
+        df['industry'] = _clean_profile_value(profile.get('industry', '')) or PROFILE_FALLBACK
         
         # 选择需要的列
-        required_columns = ['date', 'open', 'close', 'high', 'low', 'volume']
+        required_columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'sector', 'industry']
         for col in required_columns[1:]:  # date 已存在
             if col not in df.columns:
                 df[col] = None
@@ -221,12 +380,9 @@ def load_stock_list(stocklist_path: Path) -> List[str]:
                 codes = df.iloc[:, 0].astype(str).str.strip().tolist()
                 logger.info(f"使用第一列加载股票代码")
         
-        # 过滤空值和无效值
-        codes = [c for c in codes if c and c.lower() != 'unknown' and c.lower() != 'nan']
-        
-        # 修复3: 清理股票代码格式（去除可能的空格和点号）
-        codes = [c.strip().replace('.', '-') for c in codes]  # BRK.B -> BRK-B
-        codes = [c.split('.')[0] for c in codes]  # 取点号前的部分
+        # 过滤空值和无效值，并统一代码格式（BRK.B -> BRK-B）
+        codes = [_normalize_ticker(c) for c in codes]
+        codes = [c for c in codes if c]
         
         # 去重
         codes = list(dict.fromkeys(codes))
@@ -262,6 +418,10 @@ def main():
     if not all_tickers:
         logger.error("没有可下载的股票代码")
         return
+
+    # 尝试从 stocklist 预加载行业映射，减少额外网络请求
+    profile_seed = load_profile_seed(args.stocklist)
+    profile_cache: Dict[str, Dict[str, str]] = {}
 
     # 调试: 显示前几个股票代码
     logger.info(f"前10个股票代码: {all_tickers[:10]}")
@@ -313,7 +473,17 @@ def main():
         if batch_data:
             for ticker in batch_tickers:
                 if ticker in batch_data:
-                    if process_and_save_data(ticker, batch_data[ticker], args.out):
+                    ticker_key = _normalize_ticker(ticker)
+                    if ticker_key in profile_cache:
+                        profile = profile_cache[ticker_key]
+                    else:
+                        profile = fetch_ticker_profile(
+                            ticker=ticker_key,
+                            seed_profile=profile_seed.get(ticker_key),
+                        )
+                        profile_cache[ticker_key] = profile
+
+                    if process_and_save_data(ticker, batch_data[ticker], args.out, profile=profile):
                         success_count += 1
                     else:
                         fail_count += 1

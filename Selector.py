@@ -1114,3 +1114,245 @@ class BBDMomentumSignalSelector:
 
         return picks
 
+
+class BBDMomentumKDJSelector:
+    """
+    BBD 动能信号 + 当日 KDJ J 值过滤 选股器。
+
+    逻辑：在 BBDMomentumSignalSelector 的所有买点条件基础上，
+    再要求当日 KDJ 的 J 值必须小于配置阈值。
+    """
+
+    def __init__(
+        self,
+        *,
+        max_window: int = 240,
+        kdj_j_threshold: float = 20.0,
+        use_bbd_golden_cross: bool = True,
+        use_momentum_golden_cross: bool = True,
+        use_bbd_bottom_divergence: bool = True,
+        use_momentum_bottom_divergence: bool = True,
+    ) -> None:
+        if max_window < 30:
+            raise ValueError("max_window 应 >= 30")
+        if kdj_j_threshold is None:
+            raise ValueError("kdj_j_threshold 不能为空")
+
+        self.max_window = max_window
+        self.kdj_j_threshold = float(kdj_j_threshold)
+        self.use_bbd_golden_cross = bool(use_bbd_golden_cross)
+        self.use_momentum_golden_cross = bool(use_momentum_golden_cross)
+        self.use_bbd_bottom_divergence = bool(use_bbd_bottom_divergence)
+        self.use_momentum_bottom_divergence = bool(use_momentum_bottom_divergence)
+
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+        required_cols = {"open", "high", "low", "close"}
+        if hist.empty or not required_cols.issubset(hist.columns):
+            return False
+
+        hist = hist.sort_values("date").copy()
+        if len(hist) < 30:
+            return False
+
+        close = hist["close"].astype(float)
+        high = hist["high"].astype(float)
+        low = hist["low"].astype(float)
+
+        # --- 指标主干 ---
+        al = (close + low + high) / 3.0
+        ao = compute_tdx_sma(al, 5, 1) - compute_tdx_sma(al, 13, 1)
+        bbd = (ao - compute_tdx_sma(ao, 3, 1)) * 100.0
+
+        momentum_line = ao * 10.0
+        momentum_aux = ao.ewm(span=5, adjust=False).mean() * 10.0
+        bbd_support = compute_tdx_sma(bbd, 5, 2)
+
+        # --- 金叉/死叉 ---
+        bbd_cross_up = cross_up(bbd, bbd_support)
+        dyn_cross_up = cross_up(momentum_line, momentum_aux)
+
+        # --- 底背离（与公式 SV1A / SV3A 对齐） ---
+        prev_close_at_bbd_cross = ref_prev_cross_value(close, bbd_cross_up)
+        prev_bbd_at_bbd_cross = ref_prev_cross_value(bbd, bbd_cross_up)
+        bbd_bottom_div = (
+            bbd_cross_up
+            & prev_close_at_bbd_cross.notna()
+            & prev_bbd_at_bbd_cross.notna()
+            & (prev_close_at_bbd_cross > close)
+            & (bbd > prev_bbd_at_bbd_cross)
+        )
+
+        prev_close_at_dyn_cross = ref_prev_cross_value(close, dyn_cross_up)
+        prev_dyn_at_dyn_cross = ref_prev_cross_value(momentum_line, dyn_cross_up)
+        momentum_bottom_div = (
+            dyn_cross_up
+            & prev_close_at_dyn_cross.notna()
+            & prev_dyn_at_dyn_cross.notna()
+            & (prev_close_at_dyn_cross > close)
+            & (momentum_line > prev_dyn_at_dyn_cross)
+        )
+
+        buy_sig = pd.Series(False, index=hist.index)
+        if self.use_bbd_golden_cross:
+            buy_sig = buy_sig | bbd_cross_up
+        if self.use_momentum_golden_cross:
+            buy_sig = buy_sig | dyn_cross_up
+        if self.use_bbd_bottom_divergence:
+            buy_sig = buy_sig | bbd_bottom_div
+        if self.use_momentum_bottom_divergence:
+            buy_sig = buy_sig | momentum_bottom_div
+
+        if not bool(buy_sig.iloc[-1]):
+            return False
+
+        kdj = compute_kdj(hist)
+        j_today = float(kdj["J"].iloc[-1])
+        if not np.isfinite(j_today):
+            return False
+        if j_today >= self.kdj_j_threshold:
+            return False
+        return True
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        picks: List[str] = []
+        need_len = max(30, self.max_window)
+
+        for code, df in data.items():
+            if df is None or df.empty:
+                continue
+            hist = df[df["date"] <= date].tail(need_len)
+            if len(hist) < 30:
+                continue
+            if self._passes_filters(hist):
+                j_today = float(compute_kdj(hist)["J"].iloc[-1])
+                picks.append(code)
+
+        return picks
+
+
+class BurstSignalSelector:
+    """
+    起爆/启爆信号选股器。
+
+    起爆（CDSY）条件：
+    - (C-MA(C,34))/MA(C,34)*100 < -14
+    - (H-L)/L > 0.07 且 (C-O)/O > 0.07 且 C/REF(C,1) > 1.05
+
+    启爆条件：满足以下任一
+    - XL2: LLV(L,3)=LLV(L,60) 且 C/REF(C,1) >= 1.04
+    - XL4: CROSS((C-EMA(C,21))/EMA(C,21)*100, -20)
+    - XL5: LLV(L,3)=LLV(L,120) 且 C/REF(C,1) >= 1.06
+    - XL7: CROSS((C-MA(C,24))/MA(C,24)*100, -20)
+
+    默认当日“起爆或启爆”任一成立即入选；可通过 require_both_signals
+    配置为“起爆且启爆”同时成立。
+    """
+
+    def __init__(
+        self,
+        *,
+        max_window: int = 240,
+        require_both_signals: bool = False,
+        apply_xl2_filter: bool = True,
+        xl2_filter_n: int = 5,
+        llv_equal_tolerance: float = 1e-9,
+    ) -> None:
+        if max_window < 121:
+            raise ValueError("max_window 应 >= 121")
+        if xl2_filter_n < 1:
+            raise ValueError("xl2_filter_n 应 >= 1")
+        if llv_equal_tolerance < 0:
+            raise ValueError("llv_equal_tolerance 应 >= 0")
+
+        self.max_window = max_window
+        self.require_both_signals = bool(require_both_signals)
+        self.apply_xl2_filter = bool(apply_xl2_filter)
+        self.xl2_filter_n = int(xl2_filter_n)
+        self.llv_equal_tolerance = float(llv_equal_tolerance)
+
+    @staticmethod
+    def _tdx_filter(sig: pd.Series, n: int) -> pd.Series:
+        """近似通达信 FILTER(X,N)：触发后 N 根内抑制重复信号。"""
+        arr = sig.fillna(False).astype(bool).to_numpy()
+        out = np.zeros(len(arr), dtype=bool)
+        cooldown = 0
+        for i, flag in enumerate(arr):
+            if cooldown > 0:
+                cooldown -= 1
+                continue
+            if flag:
+                out[i] = True
+                cooldown = n
+        return pd.Series(out, index=sig.index)
+
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+        required_cols = {"open", "high", "low", "close"}
+        if hist.empty or not required_cols.issubset(hist.columns):
+            return False
+
+        hist = hist.sort_values("date").copy()
+        if len(hist) < 121:
+            return False
+
+        open_ = hist["open"].astype(float)
+        high = hist["high"].astype(float)
+        low = hist["low"].astype(float)
+        close = hist["close"].astype(float)
+        prev_close = close.shift(1)
+        eps = 1e-9
+
+        ma34 = close.rolling(window=34, min_periods=34).mean()
+        ttt1 = (close - ma34) / (ma34 + eps) * 100.0 < -14.0
+        ttt2 = (
+            ((high - low) / (low + eps) > 0.07)
+            & ((close - open_) / (open_ + eps) > 0.07)
+            & (close / (prev_close + eps) > 1.05)
+        )
+        qibao_sig = ttt1 & ttt2
+
+        llv3 = low.rolling(window=3, min_periods=3).min()
+        llv60 = low.rolling(window=60, min_periods=60).min()
+        llv120 = low.rolling(window=120, min_periods=120).min()
+
+        xl2_raw = (
+            np.isclose(llv3.to_numpy(), llv60.to_numpy(), rtol=0.0, atol=self.llv_equal_tolerance)
+            & (close / (prev_close + eps) >= 1.04).to_numpy()
+        )
+        xl2_raw = pd.Series(xl2_raw, index=hist.index)
+
+        ema21 = close.ewm(span=21, adjust=False).mean()
+        xl3 = (close - ema21) / (ema21 + eps) * 100.0
+        xl4 = cross_up(xl3, pd.Series(-20.0, index=hist.index))
+
+        xl5 = (
+            np.isclose(llv3.to_numpy(), llv120.to_numpy(), rtol=0.0, atol=self.llv_equal_tolerance)
+            & (close / (prev_close + eps) >= 1.06).to_numpy()
+        )
+        xl5 = pd.Series(xl5, index=hist.index)
+
+        ma24 = close.rolling(window=24, min_periods=24).mean()
+        xl6 = (close - ma24) / (ma24 + eps) * 100.0
+        xl7 = cross_up(xl6, pd.Series(-20.0, index=hist.index))
+
+        xl2_sig = self._tdx_filter(xl2_raw, self.xl2_filter_n) if self.apply_xl2_filter else xl2_raw
+        qibao_enable_sig = xl2_sig | xl4 | xl5 | xl7
+
+        if self.require_both_signals:
+            return bool(qibao_sig.iloc[-1] and qibao_enable_sig.iloc[-1])
+        return bool(qibao_sig.iloc[-1] or qibao_enable_sig.iloc[-1])
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        picks: List[str] = []
+        need_len = max(121, self.max_window)
+
+        for code, df in data.items():
+            if df is None or df.empty:
+                continue
+            hist = df[df["date"] <= date].tail(need_len)
+            if len(hist) < 121:
+                continue
+            if self._passes_filters(hist):
+                picks.append(code)
+
+        return picks
+
