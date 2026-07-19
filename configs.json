@@ -88,7 +88,7 @@
     },
     {
       "class": "BBDMomentumSignalSelector",
-      "alias": "主任抄底战法",
+      "alias": "主任BBD战法",
       "activate": true,
       "params": {
         "max_window": 240,
@@ -96,6 +96,30 @@
         "use_momentum_golden_cross": true,
         "use_bbd_bottom_divergence": true,
         "use_momentum_bottom_divergence": true
+      }
+    },
+    {
+      "class": "BBDMomentumKDJSelector",
+      "alias": "主任BBD战法-抄底",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "kdj_j_threshold": 10,
+        "use_bbd_golden_cross": true,
+        "use_momentum_golden_cross": true,
+        "use_bbd_bottom_divergence": true,
+        "use_momentum_bottom_divergence": true
+      }
+    },
+    {
+      "class": "BurstSignalSelector",
+      "alias": "起爆启爆战法",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "require_both_signals": false,
+        "apply_xl2_filter": true,
+        "xl2_filter_n": 5
       }
     }
   ]
