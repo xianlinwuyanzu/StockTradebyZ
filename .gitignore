@@ -1,9 +1,29 @@
-*.txt
-*.csv
-*.log
-*.bak
-*.tmp
-*.json
-*.js
+# Python caches / virtual env
 __pycache__/
+*.pyc
+.venv/
+
+# Node assets
 node_modules/
+
+# Runtime logs and temp
+*.log
+*.tmp
+*.bak
+logs/
+
+# Generated market data and caches
+data/
+stock_data_cache/
+jxt_v7/cache/
+jxt_v7/output/
+
+# Generated reports / backtest outputs
+backtest_*.csv
+backtest_*.png
+selection_dashboard.html
+selection_intersections.csv
+selection_overlap.png
+
+# Optional local env file
+.env

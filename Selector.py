@@ -1230,6 +1230,307 @@ class BBDMomentumKDJSelector:
         return picks
 
 
+class MultiCycleRSVSelector:
+    """
+    指标 2 的多周期 RSV 超卖选股器。
+
+    默认在“黄金坑”区间内持续入选：短、中、长三条平滑 RSV
+    同时小于 oversold_threshold。可选仅在首次进入黄金坑时入选。
+    """
+
+    def __init__(
+        self,
+        *,
+        max_window: int = 120,
+        short_window: int = 8,
+        middle_window: int = 21,
+        long_window: int = 55,
+        oversold_threshold: float = 15.0,
+        bottom_threshold: float = 20.0,
+        use_golden_pit: bool = True,
+        use_bottom_entry: bool = False,
+        golden_pit_entry_only: bool = False,
+    ) -> None:
+        if max_window < max(short_window, middle_window, long_window):
+            raise ValueError("max_window 必须不小于最长 RSV 窗口")
+        if min(short_window, middle_window, long_window) < 1:
+            raise ValueError("RSV 窗口必须 >= 1")
+        if not use_golden_pit and not use_bottom_entry:
+            raise ValueError("至少启用一种 RSV 买点信号")
+
+        self.max_window = int(max_window)
+        self.short_window = int(short_window)
+        self.middle_window = int(middle_window)
+        self.long_window = int(long_window)
+        self.oversold_threshold = float(oversold_threshold)
+        self.bottom_threshold = float(bottom_threshold)
+        self.use_golden_pit = bool(use_golden_pit)
+        self.use_bottom_entry = bool(use_bottom_entry)
+        self.golden_pit_entry_only = bool(golden_pit_entry_only)
+
+    @staticmethod
+    def _rsv(close: pd.Series, high: pd.Series, low: pd.Series, window: int) -> pd.Series:
+        low_n = low.rolling(window=window, min_periods=window).min()
+        high_n = high.rolling(window=window, min_periods=window).max()
+        return (close - low_n) / (high_n - low_n + 1e-9) * 100.0
+
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+        required_cols = {"high", "low", "close"}
+        min_history = max(self.short_window, self.middle_window, self.long_window)
+        if hist.empty or not required_cols.issubset(hist.columns) or len(hist) < min_history:
+            return False
+
+        hist = hist.sort_values("date").copy()
+        close = hist["close"].astype(float)
+        high = hist["high"].astype(float)
+        low = hist["low"].astype(float)
+
+        short_line = compute_tdx_sma(compute_tdx_sma(self._rsv(close, high, low, self.short_window), 3, 1), 3, 1)
+        middle_line = compute_tdx_sma(self._rsv(close, high, low, self.middle_window), 5, 1)
+        long_line = compute_tdx_sma(self._rsv(close, high, low, self.long_window), 5, 1)
+
+        golden_pit = (
+            (short_line < self.oversold_threshold)
+            & (middle_line < self.oversold_threshold)
+            & (long_line < self.oversold_threshold)
+        )
+        bottom_zone = middle_line < self.bottom_threshold
+
+        golden_pit_entry = golden_pit & ~golden_pit.shift(1, fill_value=False)
+        bottom_entry = bottom_zone & ~bottom_zone.shift(1, fill_value=False)
+
+        buy_sig = pd.Series(False, index=hist.index)
+        if self.use_golden_pit:
+            buy_sig = buy_sig | (golden_pit_entry if self.golden_pit_entry_only else golden_pit)
+        if self.use_bottom_entry:
+            buy_sig = buy_sig | bottom_entry
+        return bool(buy_sig.iloc[-1])
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        picks: List[str] = []
+        need_len = max(self.max_window, self.long_window)
+        for code, df in data.items():
+            if df is None or df.empty:
+                continue
+            hist = df[df["date"] <= date].tail(need_len)
+            if self._passes_filters(hist):
+                picks.append(code)
+        return picks
+
+
+class MarketStructureBuySelector:
+    """
+    指标 1 的实时峰谷结构买入选股器。
+
+    峰谷在其后 pivot_confirm_bars 根 K 线走完后才确认，因此不使用
+    BACKSET 回填历史，信号日期可直接用于当日收盘筛选与次日交易。
+    """
+
+    def __init__(
+        self,
+        *,
+        max_window: int = 240,
+        pivot_window: int = 24,
+        pivot_confirm_bars: int = 5,
+        retest_tolerance: float = 0.0,
+        use_probe_signal: bool = True,
+        use_strong_bottom_signal: bool = True,
+    ) -> None:
+        if pivot_window <= pivot_confirm_bars:
+            raise ValueError("pivot_window 必须大于 pivot_confirm_bars")
+        if max_window < pivot_window:
+            raise ValueError("max_window 必须不小于 pivot_window")
+        if retest_tolerance < 0:
+            raise ValueError("retest_tolerance 必须 >= 0")
+        if not use_probe_signal and not use_strong_bottom_signal:
+            raise ValueError("至少启用一种结构买点信号")
+
+        self.max_window = int(max_window)
+        self.pivot_window = int(pivot_window)
+        self.pivot_confirm_bars = int(pivot_confirm_bars)
+        self.retest_tolerance = float(retest_tolerance)
+        self.use_probe_signal = bool(use_probe_signal)
+        self.use_strong_bottom_signal = bool(use_strong_bottom_signal)
+
+    def _structure_count(self, hist: pd.DataFrame) -> int:
+        """返回原公式四项买入条件中当前已满足的数量。"""
+        if len(hist) < self.pivot_window:
+            return 0
+
+        high = hist["high"].astype(float).to_numpy()
+        low = hist["low"].astype(float).to_numpy()
+        pivots: List[tuple[str, int, float]] = []
+
+        # 第 i 根 K 线仅确认 i-confirm 根的峰谷；窗口与原 A1/A2 一致。
+        for confirmed_at in range(self.pivot_window - 1, len(hist)):
+            pivot_at = confirmed_at - self.pivot_confirm_bars
+            start = confirmed_at - self.pivot_window + 1
+            candidate_high = high[pivot_at] >= np.max(high[start : confirmed_at + 1])
+            candidate_low = low[pivot_at] <= np.min(low[start : confirmed_at + 1])
+
+            candidates: List[tuple[str, float]] = []
+            if candidate_high:
+                candidates.append(("high", float(high[pivot_at])))
+            if candidate_low:
+                candidates.append(("low", float(low[pivot_at])))
+            for kind, price in candidates:
+                if not pivots:
+                    pivots.append((kind, pivot_at, price))
+                elif pivots[-1][0] == kind:
+                    previous_price = pivots[-1][2]
+                    is_more_extreme = (kind == "high" and price >= previous_price) or (
+                        kind == "low" and price <= previous_price
+                    )
+                    if is_more_extreme:
+                        pivots[-1] = (kind, pivot_at, price)
+                else:
+                    pivots.append((kind, pivot_at, price))
+
+        if len(pivots) < 3:
+            return 0
+
+        previous_high, swing_low, secondary_high = pivots[-3:]
+        if (previous_high[0], swing_low[0], secondary_high[0]) != ("high", "low", "high"):
+            return 0
+
+        # 前高 -> 低点 -> 次高的时间顺序是原 VVM11/VVM21 的两项基础条件。
+        count = 2
+        if previous_high[2] > secondary_high[2]:
+            count += 1
+        if low[-1] <= swing_low[2] * (1.0 + self.retest_tolerance):
+            count += 1
+        return count
+
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+        required_cols = {"high", "low"}
+        if hist.empty or not required_cols.issubset(hist.columns) or len(hist) < self.pivot_window:
+            return False
+
+        hist = hist.sort_values("date").copy()
+        current_count = self._structure_count(hist)
+        previous_count = self._structure_count(hist.iloc[:-1])
+
+        probe_signal = current_count == 2 and previous_count != 2
+        strong_bottom_signal = current_count >= 3 and previous_count < 3
+        return bool(
+            (self.use_probe_signal and probe_signal)
+            or (self.use_strong_bottom_signal and strong_bottom_signal)
+        )
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        picks: List[str] = []
+        for code, df in data.items():
+            if df is None or df.empty:
+                continue
+            hist = df[df["date"] <= date].tail(self.max_window)
+            if self._passes_filters(hist):
+                picks.append(code)
+        return picks
+
+
+class MACDDivergenceBottomSelector:
+    """
+    指标 4 的 MACD 底背离确认选股器。
+
+    在 MACD 负轴的相邻或隔一段空头周期中，价格创新低而 DIF 未创新低时，
+    先标记底背离；次日 DIF 的负值绝对值至少收缩 min_diff_contraction
+    才发出一次“抄底”信号，对齐原公式的 DXDX。
+    """
+
+    def __init__(
+        self,
+        *,
+        max_window: int = 240,
+        fast: int = 12,
+        slow: int = 26,
+        signal: int = 9,
+        min_diff_contraction: float = 0.01,
+        use_regular_divergence: bool = True,
+        use_three_segment_divergence: bool = True,
+    ) -> None:
+        if max_window < slow + signal:
+            raise ValueError("max_window 必须足以覆盖 MACD 预热期")
+        if fast < 1 or slow <= fast or signal < 1:
+            raise ValueError("MACD 参数必须满足 1 <= fast < slow，signal >= 1")
+        if min_diff_contraction < 0:
+            raise ValueError("min_diff_contraction 必须 >= 0")
+        if not use_regular_divergence and not use_three_segment_divergence:
+            raise ValueError("至少启用一种底背离形态")
+
+        self.max_window = int(max_window)
+        self.fast = int(fast)
+        self.slow = int(slow)
+        self.signal = int(signal)
+        self.min_diff_contraction = float(min_diff_contraction)
+        self.use_regular_divergence = bool(use_regular_divergence)
+        self.use_three_segment_divergence = bool(use_three_segment_divergence)
+
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+        if hist.empty or "close" not in hist.columns or len(hist) < self.slow + self.signal:
+            return False
+
+        close = hist.sort_values("date")["close"].astype(float).to_numpy()
+        diffs = pd.Series(close).ewm(span=self.fast, adjust=False).mean() - pd.Series(close).ewm(span=self.slow, adjust=False).mean()
+        dea = diffs.ewm(span=self.signal, adjust=False).mean()
+        macd = (diffs - dea) * 2.0
+
+        negative_segments: List[tuple[float, float]] = []
+        bottom_divergence = np.zeros(len(close), dtype=bool)
+        start: Optional[int] = None
+        for pos, is_negative in enumerate((macd < 0.0).to_numpy()):
+            if is_negative and start is None:
+                start = pos
+            if start is None or (is_negative and pos != len(close) - 1):
+                continue
+
+            end = pos if is_negative else pos - 1
+            segment_close_low = float(np.min(close[start : end + 1]))
+            segment_diff_low = float(diffs.iloc[start : end + 1].min())
+
+            regular_divergence = (
+                len(negative_segments) >= 1
+                and segment_close_low < negative_segments[-1][0]
+                and segment_diff_low > negative_segments[-1][1]
+            )
+            three_segment_divergence = (
+                len(negative_segments) >= 2
+                and segment_close_low < negative_segments[-2][0]
+                and segment_diff_low < negative_segments[-1][1]
+                and segment_diff_low > negative_segments[-2][1]
+            )
+            if (self.use_regular_divergence and regular_divergence) or (
+                self.use_three_segment_divergence and three_segment_divergence
+            ):
+                bottom_divergence[end] = bool(diffs.iloc[end] < 0.0)
+
+            negative_segments.append((segment_close_low, segment_diff_low))
+            start = None
+
+        if len(close) < 2:
+            return False
+        previous_divergence = bottom_divergence[:-1]
+        diff_contraction = abs(float(diffs.iloc[-2])) >= abs(float(diffs.iloc[-1])) * (1.0 + self.min_diff_contraction)
+        buy_sig = bool(previous_divergence[-1] and diff_contraction)
+
+        # DXDX 仅在 JJJ 从未成立变为成立的首日显示。
+        if not buy_sig:
+            return False
+        if len(close) < 3 or not bottom_divergence[-3]:
+            return True
+        prior_contraction = abs(float(diffs.iloc[-3])) >= abs(float(diffs.iloc[-2])) * (1.0 + self.min_diff_contraction)
+        return not prior_contraction
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        picks: List[str] = []
+        for code, df in data.items():
+            if df is None or df.empty:
+                continue
+            hist = df[df["date"] <= date].tail(self.max_window)
+            if self._passes_filters(hist):
+                picks.append(code)
+        return picks
+
+
 class BurstSignalSelector:
     """
     起爆/启爆信号选股器。

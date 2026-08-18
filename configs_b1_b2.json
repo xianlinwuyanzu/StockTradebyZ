@@ -1,0 +1,32 @@
+{
+  "selectors": [
+    {
+      "class": "BBIKDJSelector",
+      "alias": "少妇战法",
+      "activate": true,
+      "params": {
+        "j_threshold": 15,
+        "bbi_min_window": 20,
+        "max_window": 120,
+        "price_range_pct": 1,
+        "bbi_q_threshold": 0.2,
+        "j_q_threshold": 0.1
+      }
+    },
+    {
+      "class": "BBIShortLongSelector",
+      "alias": "补票战法",
+      "activate": true,
+      "params": {
+        "n_short": 5,
+        "n_long": 21,
+        "m": 5,
+        "bbi_min_window": 2,
+        "max_window": 120,
+        "bbi_q_threshold": 0.2,
+        "upper_rsv_threshold": 75,
+        "lower_rsv_threshold": 25
+      }
+    }
+  ]
+}

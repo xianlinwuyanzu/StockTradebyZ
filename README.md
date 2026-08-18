@@ -16,6 +16,7 @@
   * [准备 stocklist.csv](#准备-stocklistcsv)
   * [下载历史 K 线（qfq，日线）](#下载历史-k-线qfq日线)
   * [运行选股](#运行选股)
+* [云端部署（仅上传代码）](#云端部署仅上传代码)
 * [参数说明](#参数说明)
 
   * [`fetch_kline.py`](#fetch_klinepy)
@@ -51,18 +52,19 @@
 ### 环境与依赖
 
 ```bash
-# Python 3.11/3.12 均可，示例以 3.12
-conda create -n stock python=3.12 -y
-conda activate stock
+# Python 3.12 推荐（3.11 也可）
+python3 -m venv .venv
+source .venv/bin/activate
 
 # 进入你的项目目录
 cd /path/to/your/project
 
-# 安装依赖
-pip install -r requirements.txt
+# 安装依赖（全部环境依赖统一在 requirements.txt）
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
 ```
 
-> 关键依赖：`pandas`, `tqdm`, `tushare`, `numpy`, `scipy`。
+> 关键依赖：`pandas`, `tqdm`, `tushare`, `numpy`, `scipy`, `yfinance`, `matplotlib`, `requests`, `lxml`。
 
 ### 准备 Tushare Token
 
@@ -97,6 +99,65 @@ python select_stock.py \
 ```
 
 > `--date` 可省略，默认取数据中的最后交易日。
+
+---
+
+## 云端部署（仅上传代码）
+
+目标：**不上传本地 `data/`，只上传代码；云端按 `requirements.txt` 还原环境并拉取数据。**
+
+### 1) 本地打包代码（自动排除数据与产物）
+
+```bash
+cd /path/to/sf
+bash deploy/package_code_only.sh
+```
+
+脚本会生成 `sf-code-only-YYYYMMDD-HHMMSS.tar.gz`。
+
+### 2) 上传代码包到云服务器
+
+```bash
+scp sf-code-only-YYYYMMDD-HHMMSS.tar.gz user@your-server:/opt/
+```
+
+### 3) 云端解压并初始化环境（不使用 conda）
+
+```bash
+ssh user@your-server
+mkdir -p /opt/sf
+tar -xzf /opt/sf-code-only-YYYYMMDD-HHMMSS.tar.gz -C /opt/sf
+
+cd /opt/sf
+bash deploy/bootstrap_venv.sh /opt/sf
+```
+
+### 4) 配置 Token（示例）
+
+```bash
+cd /opt/sf
+cp .env.example .env
+# 编辑 .env，填入真实 TUSHARE_TOKEN
+```
+
+### 5) 云端首次拉取数据并执行选股
+
+```bash
+cd /opt/sf
+bash deploy/run_daily_cloud.sh /opt/sf
+```
+
+### 6) 定时任务（可选）
+
+```bash
+crontab -e
+```
+
+添加：
+
+```cron
+30 18 * * 1-5 /opt/sf/deploy/run_daily_cloud.sh /opt/sf >> /opt/sf/logs/daily.log 2>&1
+```
 
 ---
 

@@ -1,0 +1,142 @@
+{
+  "selectors": [
+    {
+      "class": "BBIKDJSelector",
+      "alias": "少妇战法",
+      "activate": true,
+      "params": {
+        "j_threshold": 15,
+        "bbi_min_window": 20,
+        "max_window": 120,
+        "price_range_pct": 1,
+        "bbi_q_threshold": 0.2,
+        "j_q_threshold": 0.1
+      }
+    },
+    {
+      "class": "BBIShortLongSelector",
+      "alias": "补票战法",
+      "activate": true,
+      "params": {
+        "n_short": 5,
+        "n_long": 21,
+        "m": 5,
+        "bbi_min_window": 2,
+        "max_window": 120,
+        "bbi_q_threshold": 0.2,
+        "upper_rsv_threshold": 75,
+        "lower_rsv_threshold": 25
+      }
+    },
+    {
+      "class": "PeakKDJSelector",
+      "alias": "填坑战法",
+      "activate": true,
+      "params": {
+        "j_threshold": 10,
+        "max_window": 120,
+        "fluc_threshold": 0.03,
+        "j_q_threshold": 0.1,
+        "gap_threshold": 0.2
+      }
+    },
+    {
+      "class": "MA60CrossVolumeWaveSelector",
+      "alias": "上穿60放量战法",
+      "activate": true,
+      "params": {
+        "lookback_n": 25,
+        "vol_multiple": 1.8,
+        "j_threshold": 15,
+        "j_q_threshold": 0.1,
+        "ma60_slope_days": 5,
+        "max_window": 120
+      }
+    },
+    {
+      "class": "BigBullishVolumeSelector",
+      "alias": "暴力K战法",
+      "activate": true,
+      "params": {
+        "up_pct_threshold": 0.06,
+        "upper_wick_pct_max": 0.02,
+        "require_bullish_close": true,
+        "close_lt_zxdq_mult": 1.15,
+        "vol_lookback_n": 20,
+        "vol_multiple": 2.5
+      }
+    },
+    {
+      "class": "BBDMomentumSignalSelector",
+      "alias": "主任BBD战法",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "use_bbd_golden_cross": true,
+        "use_momentum_golden_cross": true,
+        "use_bbd_bottom_divergence": true,
+        "use_momentum_bottom_divergence": true
+      }
+    },
+    {
+      "class": "BBDMomentumKDJSelector",
+      "alias": "主任BBD战法-抄底",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "kdj_j_threshold": 10,
+        "use_bbd_golden_cross": true,
+        "use_momentum_golden_cross": true,
+        "use_bbd_bottom_divergence": true,
+        "use_momentum_bottom_divergence": true
+      }
+    },
+    {
+      "class": "MultiCycleRSVSelector",
+      "alias": "多周期RSV黄金坑",
+      "activate": true,
+      "params": {
+        "max_window": 120,
+        "oversold_threshold": 15,
+        "use_golden_pit": true,
+        "use_bottom_entry": false,
+        "golden_pit_entry_only": false
+      }
+    },
+    {
+      "class": "MarketStructureBuySelector",
+      "alias": "峰谷结构抄底",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "pivot_window": 24,
+        "pivot_confirm_bars": 5,
+        "retest_tolerance": 0.0,
+        "use_probe_signal": true,
+        "use_strong_bottom_signal": true
+      }
+    },
+    {
+      "class": "MACDDivergenceBottomSelector",
+      "alias": "MACD底背抄底",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "min_diff_contraction": 0.01,
+        "use_regular_divergence": true,
+        "use_three_segment_divergence": true
+      }
+    },
+    {
+      "class": "BurstSignalSelector",
+      "alias": "起爆启爆战法",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "require_both_signals": false,
+        "apply_xl2_filter": true,
+        "xl2_filter_n": 5
+      }
+    }
+  ]
+}

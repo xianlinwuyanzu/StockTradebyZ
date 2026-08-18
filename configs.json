@@ -112,6 +112,42 @@
       }
     },
     {
+      "class": "MultiCycleRSVSelector",
+      "alias": "多周期RSV黄金坑",
+      "activate": true,
+      "params": {
+        "max_window": 120,
+        "oversold_threshold": 15,
+        "use_golden_pit": true,
+        "use_bottom_entry": false,
+        "golden_pit_entry_only": false
+      }
+    },
+    {
+      "class": "MarketStructureBuySelector",
+      "alias": "峰谷结构抄底",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "pivot_window": 24,
+        "pivot_confirm_bars": 5,
+        "retest_tolerance": 0.0,
+        "use_probe_signal": true,
+        "use_strong_bottom_signal": true
+      }
+    },
+    {
+      "class": "MACDDivergenceBottomSelector",
+      "alias": "MACD底背抄底",
+      "activate": true,
+      "params": {
+        "max_window": 240,
+        "min_diff_contraction": 0.01,
+        "use_regular_divergence": true,
+        "use_three_segment_divergence": true
+      }
+    },
+    {
       "class": "BurstSignalSelector",
       "alias": "起爆启爆战法",
       "activate": true,
