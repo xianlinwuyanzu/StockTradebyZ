@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>策略选股仪表盘 | 2026-08-14</title>
+    <style>
+        :root { --ink:#172033; --muted:#6b7280; --line:#e6e9ef; --panel:#ffffff; --canvas:#f5f7fa; }
+        * { box-sizing:border-box; }
+        body { margin:0; background:var(--canvas); color:var(--ink); font:14px "Hiragino Sans GB","Arial Unicode MS",sans-serif; }
+        main { max-width:1540px; margin:0 auto; padding:28px; }
+        header { display:flex; justify-content:space-between; align-items:end; margin-bottom:20px; gap:16px; }
+        h1 { margin:0; font-size:24px; font-weight:700; letter-spacing:0; }
+        .summary { color:var(--muted); line-height:1.7; text-align:right; }
+        .layout { display:grid; grid-template-columns:minmax(580px,1.35fr) minmax(300px,.65fr); gap:18px; }
+        .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px rgba(23,32,51,.05); }
+        .map { min-height:650px; padding:18px; overflow:auto; }
+        .panel-title { margin:0 0 4px; font-size:16px; }
+        .hint { margin:0 0 14px; color:var(--muted); font-size:12px; }
+        svg { display:block; width:100%; min-width:760px; height:auto; background:#fbfcfe; border:1px solid #edf0f4; border-radius:6px; }
+        .strategy-circle { cursor:pointer; transition:opacity .15s; }
+        .strategy-circle:hover, .strategy-circle.active { opacity:.78; }
+        .strategy-label { font-size:12px; font-weight:700; fill:#172033; pointer-events:none; }
+        .strategy-count { font-size:12px; fill:#344054; pointer-events:none; }
+        .strategy-codes { font-size:11px; fill:#344054; pointer-events:none; }
+        .side { display:grid; gap:18px; align-content:start; }
+        .detail, .intersections { padding:18px; }
+        .detail h2, .intersections h2 { margin:0 0 6px; font-size:16px; }
+        .code-list { display:flex; flex-wrap:wrap; gap:7px; margin-top:16px; max-height:310px; overflow:auto; padding-right:3px; }
+        .code { padding:5px 8px; border-radius:4px; background:#f1f4f8; color:#27364b; font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+        .intersection-row { width:100%; border:0; border-top:1px solid var(--line); padding:11px 0; text-align:left; background:transparent; color:var(--ink); cursor:pointer; }
+        .intersection-row:hover { color:#176b87; }
+        .intersection-row strong { display:block; font-size:13px; }
+        .intersection-row span { display:block; margin-top:4px; color:var(--muted); font-size:12px; }
+        @media (max-width:960px) { main { padding:16px; } header { align-items:start; flex-direction:column; } .summary { text-align:left; } .layout { grid-template-columns:1fr; } }
+    </style>
+</head>
+<body>
+    <main>
+        <header>
+            <div><h1>策略选股仪表盘</h1><div class="hint">交易日 <span id="date"></span></div></div>
+            <div class="summary"><span id="strategyCount"></span> 个策略<br><span id="totalCodes"></span> 只唯一股票</div>
+        </header>
+        <section class="layout">
+            <section class="panel map"><h2 class="panel-title">策略范围</h2><p class="hint">圆面积表示入选数量，圆心显示股票代码摘要。点击圆形查看完整代码。</p><svg id="strategyMap" viewBox="0 0 800 620" role="img" aria-label="策略选股范围图"></svg></section>
+            <aside class="side">
+                <section class="panel detail"><h2 id="detailTitle">选择一个策略或交集</h2><p class="hint" id="detailHint">点击左侧圆形或下方交集条目查看完整股票代码。</p><div id="codeList" class="code-list"></div></section>
+                <section class="panel intersections"><h2>策略交集</h2><p class="hint">点击查看该组合的完整股票代码。</p><div id="intersectionList"></div></section>
+            </aside>
+        </section>
+    </main>
+    <script>
+        const dashboard = {"date": "2026-08-14", "circles": [{"name": "少妇战法", "codes": ["AIZ", "ALL", "BAX", "DPZ", "GL", "GM", "MRSH", "ROST", "TRV", "ULTA", "WTW"], "color": "#176B87", "x": 325.38, "y": 213.11, "radius": 68.21}, {"name": "SuperB1战法", "codes": [], "color": "#D96C06", "x": 393.13, "y": 267.3, "radius": 52.97}, {"name": "补票战法", "codes": ["LYG"], "color": "#2E8B57", "x": 282.14, "y": 277.21, "radius": 57.57}, {"name": "填坑战法", "codes": [], "color": "#A23B72", "x": 354.87, "y": 315.41, "radius": 52.97}, {"name": "上穿60放量战法", "codes": ["GM"], "color": "#5C6BC0", "x": 281.99, "y": 336.78, "radius": 57.57}, {"name": "暴力K战法", "codes": [], "color": "#B56576", "x": 389.39, "y": 360.93, "radius": 52.97}, {"name": "主任BBD战法", "codes": ["AEP", "AFL", "APP", "APTV", "BBY", "CAG", "CBRE", "CCEP", "CI", "CINF", "CLSK", "CME", "CMS", "COF", "CPRT", "D", "DECK", "DG", "DOW", "DTE", "DUK", "ED", "EIX", "EOG", "ESS", "EXC", "FICO", "FIG", "FISV", "FOX", "FOXA", "GWW", "HAL", "HRL", "HWM", "IVZ", "JKHY", "KDP", "KMB", "KO", "KR", "KVUE", "L", "LII", "MA", "MAA", "MAR", "MCO", "MDLZ", "META", "NDAQ", "NEE", "NRG", "NU", "NWSA", "PCG", "PFG", "PLD", "PSA", "SYF", "TDG", "TSN", "UPS", "V", "VTRS", "WAB", "WDAY", "WDC", "WU", "YUM", "ZBH", "ZTS"], "color": "#00838F", "x": 331.05, "y": 440.21, "radius": 91.96}, {"name": "主任BBD战法-抄底", "codes": ["APP", "CLSK", "VTRS"], "color": "#7A6F3A", "x": 465.31, "y": 382.48, "radius": 60.93}, {"name": "多周期RSV黄金坑", "codes": ["MO"], "color": "#176B87", "x": 474.4, "y": 312.04, "radius": 57.57}, {"name": "峰谷结构抄底", "codes": ["ALLE", "BKNG", "COHR", "DASH", "EL", "FICO", "FSLR", "INSM", "IT", "LULU", "SHW", "SOUN", "ULTA"], "color": "#D96C06", "x": 552.94, "y": 336.89, "radius": 69.54}, {"name": "MACD底背抄底", "codes": ["META", "ROL", "YUM"], "color": "#2E8B57", "x": 510.91, "y": 254.06, "radius": 60.93}, {"name": "起爆启爆战法", "codes": ["APP", "OPEN"], "color": "#A23B72", "x": 438.48, "y": 223.59, "radius": 59.47}], "intersections": [{"strategies": ["主任BBD战法", "主任BBD战法-抄底", "起爆启爆战法"], "codes": ["APP"]}, {"strategies": ["主任BBD战法", "MACD底背抄底"], "codes": ["META", "YUM"]}, {"strategies": ["主任BBD战法", "主任BBD战法-抄底"], "codes": ["CLSK", "VTRS"]}, {"strategies": ["主任BBD战法", "峰谷结构抄底"], "codes": ["FICO"]}, {"strategies": ["少妇战法", "上穿60放量战法"], "codes": ["GM"]}, {"strategies": ["少妇战法", "峰谷结构抄底"], "codes": ["ULTA"]}, {"strategies": ["主任BBD战法"], "codes": ["AEP", "AFL", "APTV", "BBY", "CAG", "CBRE", "CCEP", "CI", "CINF", "CME", "CMS", "COF", "CPRT", "D", "DECK", "DG", "DOW", "DTE", "DUK", "ED", "EIX", "EOG", "ESS", "EXC", "FIG", "FISV", "FOX", "FOXA", "GWW", "HAL", "HRL", "HWM", "IVZ", "JKHY", "KDP", "KMB", "KO", "KR", "KVUE", "L", "LII", "MA", "MAA", "MAR", "MCO", "MDLZ", "NDAQ", "NEE", "NRG", "NU", "NWSA", "PCG", "PFG", "PLD", "PSA", "SYF", "TDG", "TSN", "UPS", "V", "WAB", "WDAY", "WDC", "WU", "ZBH", "ZTS"]}, {"strategies": ["峰谷结构抄底"], "codes": ["ALLE", "BKNG", "COHR", "DASH", "EL", "FSLR", "INSM", "IT", "LULU", "SHW", "SOUN"]}, {"strategies": ["少妇战法"], "codes": ["AIZ", "ALL", "BAX", "DPZ", "GL", "MRSH", "ROST", "TRV", "WTW"]}, {"strategies": ["MACD底背抄底"], "codes": ["ROL"]}, {"strategies": ["多周期RSV黄金坑"], "codes": ["MO"]}, {"strategies": ["补票战法"], "codes": ["LYG"]}, {"strategies": ["起爆启爆战法"], "codes": ["OPEN"]}], "strategyCount": 12, "totalCodes": 98};
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.getElementById('strategyMap');
+        const codeList = document.getElementById('codeList');
+        const detailTitle = document.getElementById('detailTitle');
+        const detailHint = document.getElementById('detailHint');
+        document.getElementById('date').textContent = dashboard.date;
+        document.getElementById('strategyCount').textContent = dashboard.strategyCount;
+        document.getElementById('totalCodes').textContent = dashboard.totalCodes;
+        const addText = (parent, text, x, y, className) => {
+            const node = document.createElementNS(ns, 'text'); node.setAttribute('x', x); node.setAttribute('y', y); node.setAttribute('text-anchor', 'middle'); node.setAttribute('class', className); node.textContent = text; parent.appendChild(node);
+        };
+        const showCodes = (title, codes, hint) => {
+            detailTitle.textContent = title; detailHint.textContent = hint; codeList.replaceChildren();
+            codes.forEach(code => { const item = document.createElement('span'); item.className = 'code'; item.textContent = code; codeList.appendChild(item); });
+        };
+        dashboard.circles.forEach(circle => {
+            const group = document.createElementNS(ns, 'g'); group.setAttribute('class', 'strategy-circle');
+            const shape = document.createElementNS(ns, 'circle'); shape.setAttribute('cx', circle.x); shape.setAttribute('cy', circle.y); shape.setAttribute('r', circle.radius); shape.setAttribute('fill', circle.color); shape.setAttribute('fill-opacity', '.22'); shape.setAttribute('stroke', circle.color); shape.setAttribute('stroke-width', '2.2'); group.appendChild(shape);
+            addText(group, circle.name, circle.x, circle.y - 17, 'strategy-label');
+            addText(group, `${circle.codes.length} 只`, circle.x, circle.y + 1, 'strategy-count');
+            const preview = circle.codes.slice(0, 5); preview.forEach((code, index) => addText(group, code, circle.x, circle.y + 20 + index * 14, 'strategy-codes'));
+            if (circle.codes.length > preview.length) addText(group, `+${circle.codes.length - preview.length}`, circle.x, circle.y + 20 + preview.length * 14, 'strategy-codes');
+            group.addEventListener('click', () => { document.querySelectorAll('.strategy-circle').forEach(node => node.classList.remove('active')); group.classList.add('active'); showCodes(circle.name, circle.codes, `共 ${circle.codes.length} 只股票代码`); });
+            svg.appendChild(group);
+        });
+        const intersectionList = document.getElementById('intersectionList');
+        dashboard.intersections.forEach(item => {
+            const row = document.createElement('button'); row.className = 'intersection-row';
+            const title = document.createElement('strong'); title.textContent = item.strategies.join(' + ');
+            const meta = document.createElement('span'); meta.textContent = `${item.codes.length} 只 · ${item.codes.slice(0, 5).join(' · ')}${item.codes.length > 5 ? ' ...' : ''}`;
+            row.append(title, meta); row.addEventListener('click', () => showCodes(item.strategies.join(' + '), item.codes, `该策略组合共 ${item.codes.length} 只股票代码`)); intersectionList.appendChild(row);
+        });
+    </script>
+</body>
+</html>

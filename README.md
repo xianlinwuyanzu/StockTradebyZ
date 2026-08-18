@@ -312,6 +312,65 @@ crontab -e
 
 ---
 
+## 云端部署（仅上传代码）
+
+目标：**不上传本地 `data/`，只上传代码；云端按 `requirements.txt` 还原环境并拉取数据。**
+
+### 1) 本地打包代码（自动排除数据与产物）
+
+```bash
+cd /path/to/sf
+bash deploy/package_code_only.sh
+```
+
+脚本会生成 `sf-code-only-YYYYMMDD-HHMMSS.tar.gz`。
+
+### 2) 上传代码包到云服务器
+
+```bash
+scp sf-code-only-YYYYMMDD-HHMMSS.tar.gz user@your-server:/opt/
+```
+
+### 3) 云端解压并初始化环境（不使用 conda）
+
+```bash
+ssh user@your-server
+mkdir -p /opt/sf
+tar -xzf /opt/sf-code-only-YYYYMMDD-HHMMSS.tar.gz -C /opt/sf
+
+cd /opt/sf
+bash deploy/bootstrap_venv.sh /opt/sf
+```
+
+### 4) 配置 Token（示例）
+
+```bash
+cd /opt/sf
+cp .env.example .env
+# 编辑 .env，填入真实 TUSHARE_TOKEN
+```
+
+### 5) 云端首次拉取数据并执行选股
+
+```bash
+cd /opt/sf
+bash deploy/run_daily_cloud.sh /opt/sf
+```
+
+### 6) 定时任务（可选）
+
+```bash
+crontab -e
+```
+
+添加：
+
+```cron
+30 18 * * 1-5 /opt/sf/deploy/run_daily_cloud.sh /opt/sf >> /opt/sf/logs/daily.log 2>&1
+```
+
+---
+
 ## 参数说明
 
 ### `fetch_kline.py`
