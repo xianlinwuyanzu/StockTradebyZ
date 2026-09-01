@@ -11,6 +11,8 @@ from typing import Any, Dict, Iterable, List
 import pandas as pd
 
 from selection_visualizer import render_selection_dashboard, render_selection_overlap
+from scan_three_wave import _compute_kdj
+from bbd_signals import SIGNAL_COLUMNS, compute_bbd_signals
 
 # ---------- 日志 ----------
 logging.basicConfig(
@@ -77,6 +79,209 @@ def instantiate_selector(cfg: Dict[str, Any]):
     return cfg.get("alias", cls_name), cls(**params)
 
 
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, pd.Timestamp):
+        return value.date().isoformat()
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    if hasattr(value, "item"):
+        value = value.item()
+    try:
+        if bool(pd.isna(value)):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def _selector_passes_prefix(selector: Any, history: pd.DataFrame) -> bool:
+    if selector is None or history.empty:
+        return False
+    passes_filters = getattr(selector, "_passes_filters", None)
+    if not callable(passes_filters):
+        return False
+    max_window = int(getattr(selector, "max_window", len(history)))
+    return bool(passes_filters(history.tail(max_window)))
+
+
+def _compute_rocket_signals(
+    full_history: pd.DataFrame,
+    selectors: Dict[str, Any],
+) -> pd.Series:
+    """按现有三个买点 Selector 的判定，生成逐日火箭买点事件。"""
+    signal_rows: list[list[str]] = [[] for _ in range(len(full_history))]
+    burst_selector = selectors.get("BurstSignalSelector")
+    golden_pit_selector = selectors.get("MultiCycleRSVSelector")
+    market_selector = selectors.get("MarketStructureBuySelector")
+    previous_golden_pit_active = False
+    golden_pit_entry_only = bool(getattr(golden_pit_selector, "golden_pit_entry_only", False))
+
+    for index in range(len(full_history)):
+        prefix = full_history.iloc[: index + 1]
+        if _selector_passes_prefix(burst_selector, prefix):
+            signal_rows[index].append("起爆")
+
+        golden_pit_active = _selector_passes_prefix(golden_pit_selector, prefix)
+        if golden_pit_active and (golden_pit_entry_only or not previous_golden_pit_active):
+            signal_rows[index].append("黄金坑")
+        previous_golden_pit_active = golden_pit_active
+
+        if _selector_passes_prefix(market_selector, prefix):
+            signal_rows[index].append("峰谷结构超低")
+
+    return pd.Series(signal_rows, index=full_history.index, dtype=object)
+
+
+def write_wave_selection_outputs(
+    details: Dict[str, Dict[str, Any]],
+    data: Dict[str, pd.DataFrame],
+    trade_date: pd.Timestamp,
+    output_dir: Path,
+    data_days: int,
+    score_threshold: float,
+    strategy_name: str,
+    signal_selectors: Dict[str, Any] | None = None,
+    preselection_details: Dict[str, List[Dict[str, Any]]] | None = None,
+) -> None:
+    """写出结构化选股评分索引和前端可读取的最近日线数据。"""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    daily_dir = output_dir / "daily"
+    daily_dir.mkdir(parents=True, exist_ok=True)
+    for stale_file in daily_dir.glob("*.csv"):
+        stale_file.unlink()
+    result_items: List[Dict[str, Any]] = []
+    preselection_items: List[Dict[str, Any]] = []
+
+    daily_items: Dict[str, Dict[str, Any] | None] = {}
+
+    def build_daily_item(code: str) -> Dict[str, Any] | None:
+        if code in daily_items:
+            return daily_items[code]
+        hist = data.get(code)
+        if hist is None or hist.empty:
+            daily_items[code] = None
+            return None
+        history = (
+            hist[hist["date"] <= trade_date]
+            .sort_values("date")
+            .drop_duplicates("date")
+            .tail(max(1, data_days))
+            .reset_index(drop=True)
+        )
+        if history.empty:
+            daily_items[code] = None
+            return None
+
+        # Compute J on the full available history before taking the display window,
+        # so the 50-day output keeps the same indicator warm-up as wave detection.
+        history = history.copy()
+        full_history = hist[hist["date"] <= trade_date].sort_values("date").drop_duplicates("date").reset_index(drop=True)
+        kdj_values = _compute_kdj(full_history)
+        for column in ("K", "D", "J"):
+            history[column] = kdj_values[column].iloc[-len(history):].to_numpy()
+        bbd_values = compute_bbd_signals(full_history)
+        for column in SIGNAL_COLUMNS:
+            history[column] = bbd_values[column].iloc[-len(history):].to_numpy()
+        rocket_values = _compute_rocket_signals(full_history, signal_selectors or {})
+        history["rocket_signals"] = rocket_values.iloc[-len(history):].to_numpy()
+        recent = history
+
+        daily_path = daily_dir / f"{code}.csv"
+        recent.to_csv(daily_path, index=False, encoding="utf-8-sig")
+        daily_item = {
+            "daily_data_file": f"daily/{code}.csv",
+            "daily_data_rows": len(recent),
+            "daily_data_start": pd.Timestamp(recent["date"].iloc[0]).date().isoformat(),
+            "daily_data_end": pd.Timestamp(recent["date"].iloc[-1]).date().isoformat(),
+            "recent_daily_data": [
+            {key: _json_safe_value(value) for key, value in row.items()}
+            for row in recent.to_dict(orient="records")
+            ],
+        }
+        daily_items[code] = daily_item
+        return daily_item
+
+    def build_result_item(code: str, detail: Dict[str, Any]) -> Dict[str, Any] | None:
+        daily_item = build_daily_item(code)
+        if daily_item is None:
+            return None
+        item = dict(detail)
+        item.update(daily_item)
+        return item
+
+    def numeric_detail_value(detail: Dict[str, Any], key: str, fallback: float = -1.0) -> float:
+        try:
+            return float(detail.get(key, fallback))
+        except (TypeError, ValueError):
+            return fallback
+
+    if any("timing_score" in detail for detail in details.values()):
+        detail_items = sorted(
+            details.items(),
+            key=lambda entry: (
+                -numeric_detail_value(entry[1], "timing_score"),
+                -numeric_detail_value(entry[1], "structure_quality", numeric_detail_value(entry[1], "score")),
+                entry[0],
+            ),
+        )
+    else:
+        detail_items = sorted(details.items())
+
+    for code, detail in detail_items:
+        item = build_result_item(code, detail)
+        if item is not None:
+            result_items.append(item)
+
+    for code, candidates in sorted((preselection_details or {}).items()):
+        for detail in candidates:
+            item = build_result_item(code, detail)
+            if item is not None:
+                preselection_items.append(item)
+
+    payload = {
+        "strategy": strategy_name,
+        "trade_date": trade_date.date().isoformat(),
+        "score_threshold": score_threshold,
+        "data_days": data_days,
+        "result_count": len(result_items),
+        "results": result_items,
+        "preselection_count": len(preselection_items),
+        "preselection_results": preselection_items,
+    }
+    if strategy_name == "二波选股策略":
+        first_detail = next(iter(details.values()), {})
+        raw_max = numeric_detail_value(first_detail, "structure_match_raw_max", 8.6)
+        score_scale = numeric_detail_value(first_detail, "score_scale", 10.0 / 5.114)
+        if raw_max > 0.0 and score_scale > 0.0:
+            payload["structure_match_threshold_percent"] = round(
+                max(0.0, min(100.0, score_threshold / score_scale / raw_max * 100.0)),
+                2,
+            )
+    (output_dir / "wave_selection_results.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    summary_rows = []
+    for item in result_items:
+        summary = {
+            key: value
+            for key, value in item.items()
+            if key != "recent_daily_data"
+        }
+        for key, value in list(summary.items()):
+            if isinstance(value, (list, tuple, dict)):
+                summary[key] = json.dumps(value, ensure_ascii=False)
+        summary_rows.append(summary)
+    pd.DataFrame(summary_rows).to_csv(
+        output_dir / "wave_selection_results.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+
 # ---------- 主函数 ----------
 
 def main():
@@ -91,6 +296,7 @@ def main():
     p.add_argument("--no-visualization", action="store_true", help="不生成策略交集可视化")
     p.add_argument("--no-dashboard", action="store_true", help="不生成交互式选股仪表盘")
     args = p.parse_args()
+    logger.info("选股运行开始")
 
     # --- 加载行情 ---
     data_dir = Path(args.data_dir)
@@ -125,6 +331,18 @@ def main():
 
     # --- 逐个 Selector 运行 ---
     selection_sets: Dict[str, List[str]] = {}
+    signal_selectors: Dict[str, Any] = {}
+    wave_output_specs: List[
+        tuple[
+            str,
+            Dict[str, Dict[str, Any]],
+            Dict[str, List[Dict[str, Any]]],
+            Path,
+            int,
+            float,
+            Dict[str, Any],
+        ]
+    ] = []
     for cfg in selector_cfgs:
         if cfg.get("activate", True) is False:
             continue
@@ -136,6 +354,27 @@ def main():
 
         picks = selector.select(trade_date, data)
         selection_sets[alias] = picks
+        signal_selectors[selector.__class__.__name__] = selector
+
+        result_details = getattr(selector, "result_details", None)
+        if isinstance(result_details, dict):
+            preselection_details = getattr(selector, "preselection_details", {})
+            if not isinstance(preselection_details, dict):
+                preselection_details = {}
+            output_dir = Path(getattr(selector, "output_dir", "./wave_selection_data"))
+            data_days = int(getattr(selector, "data_days", 70))
+            score_threshold = float(getattr(selector, "score_threshold", 1.0))
+            wave_output_specs.append(
+                (
+                    alias,
+                    result_details,
+                    preselection_details,
+                    output_dir,
+                    data_days,
+                    score_threshold,
+                    signal_selectors,
+                )
+            )
 
         # 将结果写入日志，同时输出到控制台
         logger.info("")
@@ -143,6 +382,34 @@ def main():
         logger.info("交易日: %s", trade_date.date())
         logger.info("符合条件股票数: %d", len(picks))
         logger.info("%s", ", ".join(picks) if picks else "无符合条件股票")
+
+    for (
+        alias,
+        details,
+        preselection_details,
+        output_dir,
+        data_days,
+        score_threshold,
+        output_signal_selectors,
+    ) in wave_output_specs:
+        write_wave_selection_outputs(
+            details=details,
+            data=data,
+            trade_date=trade_date,
+            output_dir=output_dir,
+            data_days=data_days,
+            score_threshold=score_threshold,
+            strategy_name=alias,
+            signal_selectors=output_signal_selectors,
+            preselection_details=preselection_details,
+        )
+        logger.info(
+            "结构化选股结果: %s（%s，%d 只，最近 %d 根日线）",
+            output_dir,
+            alias,
+            len(details),
+            data_days,
+        )
 
     if not args.no_visualization:
         chart_path = Path(args.visualization_output)

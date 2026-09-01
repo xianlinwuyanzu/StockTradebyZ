@@ -18,6 +18,10 @@ stock_data_cache/
 jxt_v7/cache/
 jxt_v7/output/
 
+# Generated CSV and PNG artifacts
+*.csv
+*.png
+
 # Generated reports / backtest outputs
 backtest_*.csv
 backtest_*.png

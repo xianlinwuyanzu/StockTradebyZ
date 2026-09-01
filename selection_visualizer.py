@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Set, Tuple
 
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from matplotlib.patches import Circle, Patch
 import numpy as np
 import pandas as pd
@@ -21,12 +22,36 @@ PALETTE = (
     "#00838F",
     "#7A6F3A",
 )
-CHINESE_FONT_FAMILY = "Hiragino Sans GB"
+CHINESE_FONT_CANDIDATES = [
+    "Noto Sans CJK SC",
+    "Noto Sans CJK JP",
+    "WenQuanYi Micro Hei",
+    "WenQuanYi Micro Hei Mono",
+    "Noto Sans SC",
+    "Source Han Sans SC",
+    "Microsoft YaHei",
+    "SimHei",
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Arial Unicode MS",
+]
+
+
+def _pick_available_font(candidates: List[str]) -> str:
+    # Rebuild font list instead of using stale cache so newly installed fonts are visible.
+    fm = font_manager._load_fontmanager(try_read_cache=False)
+    installed = {f.name for f in fm.ttflist}
+    for name in candidates:
+        if name in installed:
+            return name
+    return "DejaVu Sans"
 
 
 def _configure_fonts() -> None:
-    """为 macOS 报告图选择支持中文的字体。"""
-    plt.rcParams["font.family"] = [CHINESE_FONT_FAMILY, "Arial Unicode MS", "sans-serif"]
+    """为报告图自动选择系统可用中文字体，避免 findfont 警告。"""
+    chosen = _pick_available_font(CHINESE_FONT_CANDIDATES)
+    plt.rcParams["font.family"] = [chosen, "DejaVu Sans", "sans-serif"]
+    plt.rcParams["font.sans-serif"] = CHINESE_FONT_CANDIDATES + ["DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
 
 
@@ -153,7 +178,7 @@ def render_selection_dashboard(
     <style>
         :root {{ --ink:#172033; --muted:#6b7280; --line:#e6e9ef; --panel:#ffffff; --canvas:#f5f7fa; }}
         * {{ box-sizing:border-box; }}
-        body {{ margin:0; background:var(--canvas); color:var(--ink); font:14px "Hiragino Sans GB","Arial Unicode MS",sans-serif; }}
+        body {{ margin:0; background:var(--canvas); color:var(--ink); font:14px "Noto Sans CJK SC","Noto Sans SC","WenQuanYi Micro Hei","Source Han Sans SC","Microsoft YaHei","PingFang SC","Hiragino Sans GB","Arial Unicode MS",sans-serif; }}
         main {{ max-width:1540px; margin:0 auto; padding:28px; }}
         header {{ display:flex; justify-content:space-between; align-items:end; margin-bottom:20px; gap:16px; }}
         h1 {{ margin:0; font-size:24px; font-weight:700; letter-spacing:0; }}

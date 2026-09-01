@@ -4,6 +4,14 @@ from scipy.signal import find_peaks
 import numpy as np
 import pandas as pd
 
+from bbd_signals import compute_bbd_signals
+from one_wave_structure import (
+    find_active_one_wave,
+    find_one_wave_preselections,
+    one_wave_to_dict,
+)
+from wave_structure import active_wave_to_dict, find_active_wave
+
 # --------------------------- 通用指标 --------------------------- #
 
 def compute_kdj(df: pd.DataFrame, n: int = 9) -> pd.DataFrame:
@@ -289,6 +297,8 @@ class BBIKDJSelector:
         • KDJ: J < threshold ；或位于历史 J 的 j_q_threshold 分位及以下
         • MACD: DIF > 0
         • 收盘价波动幅度 ≤ price_range_pct
+        • 当日约束: 绝对涨跌幅 < day_pct_limit、振幅 < day_amp_limit
+        • 知行线: 收盘 > 长期线，且可配置是否要求 短期线 > 长期线
     """
 
     def __init__(
@@ -299,6 +309,9 @@ class BBIKDJSelector:
         price_range_pct: float = 100.0,
         bbi_q_threshold: float = 0.05,
         j_q_threshold: float = 0.10,
+        day_pct_limit: float = 0.02,
+        day_amp_limit: float = 0.07,
+        require_short_gt_long: bool = True,
     ) -> None:
         self.j_threshold = j_threshold
         self.bbi_min_window = bbi_min_window
@@ -306,13 +319,20 @@ class BBIKDJSelector:
         self.price_range_pct = price_range_pct
         self.bbi_q_threshold = bbi_q_threshold  # ← 原 q_threshold
         self.j_q_threshold = j_q_threshold      # ← 新增
+        self.day_pct_limit = day_pct_limit
+        self.day_amp_limit = day_amp_limit
+        self.require_short_gt_long = require_short_gt_long
 
     # ---------- 单支股票过滤 ---------- #
     def _passes_filters(self, hist: pd.DataFrame) -> bool:
         hist = hist.copy()
         hist["BBI"] = compute_bbi(hist)
         
-        if not passes_day_constraints_today(hist):
+        if not passes_day_constraints_today(
+            hist,
+            pct_limit=self.day_pct_limit,
+            amp_limit=self.day_amp_limit,
+        ):
             return False
 
         # 0. 收盘价波动幅度约束（最近 max_window 根 K 线）
@@ -361,8 +381,13 @@ class BBIKDJSelector:
         if hist["DIF"].iloc[-1] <= 0:
             return False
        
-        # 4. 当日：收盘>长期线 且 短期线>长期线
-        if not zx_condition_at_positions(hist, require_close_gt_long=True, require_short_gt_long=True, pos=None):
+        # 4. 当日：收盘>长期线；是否要求短期线>长期线由参数控制
+        if not zx_condition_at_positions(
+            hist,
+            require_close_gt_long=True,
+            require_short_gt_long=self.require_short_gt_long,
+            pos=None,
+        ):
             return False
 
         return True
@@ -381,8 +406,8 @@ class BBIKDJSelector:
             if self._passes_filters(hist):
                 picks.append(code)
         return picks
-    
-    
+
+
 class SuperB1Selector:
     """SuperB1 选股器
 
@@ -1049,53 +1074,17 @@ class BBDMomentumSignalSelector:
         if len(hist) < 30:
             return False
 
-        close = hist["close"].astype(float)
-        high = hist["high"].astype(float)
-        low = hist["low"].astype(float)
-
-        # --- 指标主干 ---
-        al = (close + low + high) / 3.0
-        ao = compute_tdx_sma(al, 5, 1) - compute_tdx_sma(al, 13, 1)
-        bbd = (ao - compute_tdx_sma(ao, 3, 1)) * 100.0
-
-        momentum_line = ao * 10.0
-        momentum_aux = ao.ewm(span=5, adjust=False).mean() * 10.0
-        bbd_support = compute_tdx_sma(bbd, 5, 2)
-
-        # --- 金叉/死叉 ---
-        bbd_cross_up = cross_up(bbd, bbd_support)
-        dyn_cross_up = cross_up(momentum_line, momentum_aux)
-
-        # --- 底背离（与公式 SV1A / SV3A 对齐） ---
-        prev_close_at_bbd_cross = ref_prev_cross_value(close, bbd_cross_up)
-        prev_bbd_at_bbd_cross = ref_prev_cross_value(bbd, bbd_cross_up)
-        bbd_bottom_div = (
-            bbd_cross_up
-            & prev_close_at_bbd_cross.notna()
-            & prev_bbd_at_bbd_cross.notna()
-            & (prev_close_at_bbd_cross > close)
-            & (bbd > prev_bbd_at_bbd_cross)
-        )
-
-        prev_close_at_dyn_cross = ref_prev_cross_value(close, dyn_cross_up)
-        prev_dyn_at_dyn_cross = ref_prev_cross_value(momentum_line, dyn_cross_up)
-        momentum_bottom_div = (
-            dyn_cross_up
-            & prev_close_at_dyn_cross.notna()
-            & prev_dyn_at_dyn_cross.notna()
-            & (prev_close_at_dyn_cross > close)
-            & (momentum_line > prev_dyn_at_dyn_cross)
-        )
+        signal_values = compute_bbd_signals(hist)
 
         buy_sig = pd.Series(False, index=hist.index)
         if self.use_bbd_golden_cross:
-            buy_sig = buy_sig | bbd_cross_up
+            buy_sig = buy_sig | signal_values["bbd_buy"]
         if self.use_momentum_golden_cross:
-            buy_sig = buy_sig | dyn_cross_up
+            buy_sig = buy_sig | signal_values["momentum_buy"]
         if self.use_bbd_bottom_divergence:
-            buy_sig = buy_sig | bbd_bottom_div
+            buy_sig = buy_sig | signal_values["bbd_bottom_divergence"]
         if self.use_momentum_bottom_divergence:
-            buy_sig = buy_sig | momentum_bottom_div
+            buy_sig = buy_sig | signal_values["momentum_bottom_divergence"]
 
         return bool(buy_sig.iloc[-1])
 
@@ -1154,53 +1143,17 @@ class BBDMomentumKDJSelector:
         if len(hist) < 30:
             return False
 
-        close = hist["close"].astype(float)
-        high = hist["high"].astype(float)
-        low = hist["low"].astype(float)
-
-        # --- 指标主干 ---
-        al = (close + low + high) / 3.0
-        ao = compute_tdx_sma(al, 5, 1) - compute_tdx_sma(al, 13, 1)
-        bbd = (ao - compute_tdx_sma(ao, 3, 1)) * 100.0
-
-        momentum_line = ao * 10.0
-        momentum_aux = ao.ewm(span=5, adjust=False).mean() * 10.0
-        bbd_support = compute_tdx_sma(bbd, 5, 2)
-
-        # --- 金叉/死叉 ---
-        bbd_cross_up = cross_up(bbd, bbd_support)
-        dyn_cross_up = cross_up(momentum_line, momentum_aux)
-
-        # --- 底背离（与公式 SV1A / SV3A 对齐） ---
-        prev_close_at_bbd_cross = ref_prev_cross_value(close, bbd_cross_up)
-        prev_bbd_at_bbd_cross = ref_prev_cross_value(bbd, bbd_cross_up)
-        bbd_bottom_div = (
-            bbd_cross_up
-            & prev_close_at_bbd_cross.notna()
-            & prev_bbd_at_bbd_cross.notna()
-            & (prev_close_at_bbd_cross > close)
-            & (bbd > prev_bbd_at_bbd_cross)
-        )
-
-        prev_close_at_dyn_cross = ref_prev_cross_value(close, dyn_cross_up)
-        prev_dyn_at_dyn_cross = ref_prev_cross_value(momentum_line, dyn_cross_up)
-        momentum_bottom_div = (
-            dyn_cross_up
-            & prev_close_at_dyn_cross.notna()
-            & prev_dyn_at_dyn_cross.notna()
-            & (prev_close_at_dyn_cross > close)
-            & (momentum_line > prev_dyn_at_dyn_cross)
-        )
+        signal_values = compute_bbd_signals(hist)
 
         buy_sig = pd.Series(False, index=hist.index)
         if self.use_bbd_golden_cross:
-            buy_sig = buy_sig | bbd_cross_up
+            buy_sig = buy_sig | signal_values["bbd_buy"]
         if self.use_momentum_golden_cross:
-            buy_sig = buy_sig | dyn_cross_up
+            buy_sig = buy_sig | signal_values["momentum_buy"]
         if self.use_bbd_bottom_divergence:
-            buy_sig = buy_sig | bbd_bottom_div
+            buy_sig = buy_sig | signal_values["bbd_bottom_divergence"]
         if self.use_momentum_bottom_divergence:
-            buy_sig = buy_sig | momentum_bottom_div
+            buy_sig = buy_sig | signal_values["momentum_bottom_divergence"]
 
         if not bool(buy_sig.iloc[-1]):
             return False
@@ -1656,4 +1609,278 @@ class BurstSignalSelector:
                 picks.append(code)
 
         return picks
+
+
+class WaveStructureSelector:
+    """选择截至最新日线仍未破坏的连续上升波浪结构。
+
+    已完成的上涨-回调波必须满足完整结构条件；最后一波可以尚未结束，
+    只要最新价格没有跌破当前起点、回撤上限或当前浪的时间边界，就保留为第 N 浪。
+    ``score_threshold`` 是模型匹配度评分线，不代表收益概率。
+    """
+
+    def __init__(
+        self,
+        score_threshold: float = 1.0,
+        min_completed_waves: int = 1,
+        data_days: int = 70,
+        output_dir: str = "./wave_selection_data",
+        min_pullback: float = 0.04,
+        min_j_pullback_drop: float = 30.0,
+        max_pullback: float = 0.28,
+        min_up_return: float = 0.06,
+        min_step: float = 0.02,
+        lower_low_tolerance: float = 0.05,
+        active_low_break_tolerance: float = 0.05,
+        position_j_low_tolerance: float = 30.0,
+        position_j_decline_scale: float = 40.0,
+        position_recent_j_days: int = 3,
+        top_plateau_tolerance: float = 0.01,
+        top_plateau_after_wave: int = 3,
+        min_path_efficiency: float = 0.58,
+        up_path_efficiency_weight: float = 1.5,
+        up_direction_consistency_weight: float = 1.5,
+        pullback_path_efficiency_weight: float = 0.6,
+        timing_min_top_to_reference_bars: int = 2,
+        timing_min_reference_period: int = 7,
+        timing_max_reference_period: int = 25,
+        timing_reference_j_limit: float = 5.0,
+        timing_reference_support_tolerance: float = 0.0,
+        timing_low_j_threshold: float = 10.0,
+        timing_j_rebound_scale: float = 30.0,
+        timing_doji_body_ratio: float = 0.20,
+        timing_doji_bonus: float = 3.0,
+        max_open_wave_period: int = 25,
+        start_price_lookback: int = 120,
+        start_price_high_drawdown_scale: float = 0.40,
+        weekly_j_lookback_weeks: int = 26,
+        weekly_j_high_threshold: float = 60.0,
+        weekly_j_low_threshold: float = 10.0,
+        score_anchor_raw: float = 5.114,
+        score_reference_points: float = 10.0,
+    ) -> None:
+        self.score_threshold = float(score_threshold)
+        self.min_completed_waves = max(1, int(min_completed_waves))
+        self.data_days = max(1, int(data_days))
+        self.output_dir = output_dir
+        self.result_details: Dict[str, Dict[str, Any]] = {}
+        self.wave_config = {
+            "min_pullback": float(min_pullback),
+            "min_j_pullback_drop": float(min_j_pullback_drop),
+            "max_pullback": float(max_pullback),
+            "min_up_return": float(min_up_return),
+            "min_step": float(min_step),
+            "lower_low_tolerance": float(lower_low_tolerance),
+            "active_low_break_tolerance": float(active_low_break_tolerance),
+            "position_j_low_tolerance": float(position_j_low_tolerance),
+            "position_j_decline_scale": float(position_j_decline_scale),
+            "position_recent_j_days": max(1, int(position_recent_j_days)),
+            "top_plateau_tolerance": float(top_plateau_tolerance),
+            "top_plateau_after_wave": max(2, int(top_plateau_after_wave)),
+            "min_path_efficiency": float(min_path_efficiency),
+            "up_path_efficiency_weight": float(up_path_efficiency_weight),
+            "up_direction_consistency_weight": float(up_direction_consistency_weight),
+            "pullback_path_efficiency_weight": float(pullback_path_efficiency_weight),
+            "timing_min_top_to_reference_bars": max(0, int(timing_min_top_to_reference_bars)),
+            "timing_min_reference_period": max(1, int(timing_min_reference_period)),
+            "timing_max_reference_period": max(1, int(timing_max_reference_period)),
+            "timing_reference_j_limit": float(timing_reference_j_limit),
+            "timing_reference_support_tolerance": float(timing_reference_support_tolerance),
+            "timing_low_j_threshold": float(timing_low_j_threshold),
+            "timing_j_rebound_scale": float(timing_j_rebound_scale),
+            "timing_doji_body_ratio": float(timing_doji_body_ratio),
+            "timing_doji_bonus": float(timing_doji_bonus),
+            "max_open_wave_period": int(max_open_wave_period),
+            "start_price_lookback": max(1, int(start_price_lookback)),
+            "start_price_high_drawdown_scale": float(start_price_high_drawdown_scale),
+            "weekly_j_lookback_weeks": max(1, int(weekly_j_lookback_weeks)),
+            "weekly_j_high_threshold": float(weekly_j_high_threshold),
+            "weekly_j_low_threshold": float(weekly_j_low_threshold),
+            "score_anchor_raw": float(score_anchor_raw),
+            "score_reference_points": float(score_reference_points),
+        }
+
+    def select(
+        self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]
+    ) -> List[str]:
+        picks: List[str] = []
+        self.result_details = {}
+        for code, df in data.items():
+            hist = (
+                df[df["date"] <= date]
+                .sort_values("date")
+                .drop_duplicates("date")
+                .reset_index(drop=True)
+            )
+            hist["code"] = code
+            candidate = find_active_wave(
+                hist,
+                cfg=self.wave_config,
+                min_completed_waves=self.min_completed_waves,
+            )
+            if candidate is None or candidate.score < self.score_threshold:
+                continue
+            detail = active_wave_to_dict(candidate, hist, self.score_threshold)
+            detail["data_days"] = self.data_days
+            detail["output_dir"] = self.output_dir
+            self.result_details[code] = detail
+            picks.append(code)
+
+        return sorted(
+            picks,
+            key=lambda code: (
+                -self.result_details[code]["timing_score"],
+                -self.result_details[code]["structure_quality"],
+                code,
+            ),
+        )
+
+
+class OneWaveEntrySelector:
+    """选择仍处于第一上涨波回调阶段、且尚未进入二波结果的股票。"""
+
+    def __init__(
+        self,
+        score_threshold: float = 1.0,
+        data_days: int = 70,
+        output_dir: str = "./one_wave_entry_data",
+        min_wave_bars: int = 2,
+        max_wave_bars: int = 20,
+        min_up_return: float = 0.06,
+        min_path_efficiency: float = 0.58,
+        path_efficiency_weight: float = 2.0,
+        max_up_adverse: float = 0.12,
+        max_one_wave_period: int = 30,
+        start_price_lookback: int = 120,
+        start_price_high_drawdown_scale: float = 0.40,
+        start_price_drawdown_weight: float = 1.5,
+        min_reference_period: int = 7,
+        max_reference_period: int = 25,
+        min_top_to_reference_bars: int = 2,
+        max_reference_j: float = 5.0,
+        max_reference_rebound: float = 0.15,
+        j_rebound_exit_threshold: float = 80.0,
+        timing_j_rebound_scale: float = 30.0,
+        timing_low_j_threshold: float = 10.0,
+        timing_doji_body_ratio: float = 0.20,
+        timing_doji_bonus: float = 3.0,
+        pullback_path_efficiency_low: float = 0.35,
+        pullback_path_efficiency_high: float = 0.85,
+        pullback_path_efficiency_penalty: float = 5.0,
+        max_pullback: float = 0.28,
+        max_observation_after_reference: int = 25,
+        support_close_tolerance: float = 0.0,
+        exclude_existing_two_wave: bool = True,
+        existing_two_wave_score_threshold: float = 1.0,
+    ) -> None:
+        self.score_threshold = float(score_threshold)
+        self.data_days = max(1, int(data_days))
+        self.output_dir = output_dir
+        self.wave_config = {
+            "min_wave_bars": max(1, int(min_wave_bars)),
+            "max_wave_bars": max(1, int(max_wave_bars)),
+            "min_up_return": float(min_up_return),
+            "min_path_efficiency": float(min_path_efficiency),
+            "path_efficiency_weight": float(path_efficiency_weight),
+            "max_up_adverse": float(max_up_adverse),
+            "max_one_wave_period": max(1, int(max_one_wave_period)),
+            "start_price_lookback": max(1, int(start_price_lookback)),
+            "start_price_high_drawdown_scale": float(start_price_high_drawdown_scale),
+            "start_price_drawdown_weight": float(start_price_drawdown_weight),
+            "min_reference_period": max(1, int(min_reference_period)),
+            "max_reference_period": max(1, int(max_reference_period)),
+            "min_top_to_reference_bars": max(1, int(min_top_to_reference_bars)),
+            "max_reference_j": float(max_reference_j),
+            "max_reference_rebound": float(max_reference_rebound),
+            "j_rebound_exit_threshold": float(j_rebound_exit_threshold),
+            "timing_j_rebound_scale": float(timing_j_rebound_scale),
+            "timing_low_j_threshold": float(timing_low_j_threshold),
+            "timing_doji_body_ratio": float(timing_doji_body_ratio),
+            "timing_doji_bonus": float(timing_doji_bonus),
+            "pullback_path_efficiency_low": float(pullback_path_efficiency_low),
+            "pullback_path_efficiency_high": float(pullback_path_efficiency_high),
+            "pullback_path_efficiency_penalty": float(pullback_path_efficiency_penalty),
+            "max_pullback": float(max_pullback),
+            "max_observation_after_reference": max(1, int(max_observation_after_reference)),
+            "support_close_tolerance": max(0.0, float(support_close_tolerance)),
+        }
+        self.exclude_existing_two_wave = bool(exclude_existing_two_wave)
+        self.existing_two_wave_score_threshold = float(existing_two_wave_score_threshold)
+        self.result_details: Dict[str, Dict[str, Any]] = {}
+        self.preselection_details: Dict[str, List[Dict[str, Any]]] = {}
+
+    @staticmethod
+    def _is_existing_two_wave_result(hist: pd.DataFrame, score_threshold: float) -> bool:
+        candidate = find_active_wave(hist, cfg=WaveStructureSelector().wave_config, min_completed_waves=1)
+        return candidate is not None and candidate.score >= score_threshold
+
+    def select(
+        self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]
+    ) -> List[str]:
+        picks: List[str] = []
+        self.result_details = {}
+        self.preselection_details = {}
+        for code, df in data.items():
+            if df is None or df.empty:
+                continue
+            hist = (
+                df[df["date"] <= date]
+                .sort_values("date")
+                .drop_duplicates("date")
+                .reset_index(drop=True)
+            )
+            if len(hist) < 25:
+                continue
+            hist["code"] = code
+            preselection_candidates = find_one_wave_preselections(
+                hist, cfg=self.wave_config
+            )
+            candidate = find_active_one_wave(hist, cfg=self.wave_config)
+            active_key = (
+                candidate.start1.start,
+                candidate.top1.start,
+                candidate.j2_reference_index,
+            ) if candidate is not None else None
+            preselection_rows: List[Dict[str, Any]] = []
+            for preselection in preselection_candidates:
+                preselection_key = (
+                    preselection.start1.start,
+                    preselection.top1.start,
+                    preselection.j2_reference_index,
+                )
+                detail = one_wave_to_dict(
+                    preselection, hist, self.score_threshold
+                )
+                detail["preselection_stage"] = "1起预选"
+                if active_key == preselection_key and (
+                    candidate is not None and candidate.score >= self.score_threshold
+                ):
+                    detail["preselection_status"] = "当前一波结果"
+                elif candidate is not None and candidate.score < self.score_threshold:
+                    detail["preselection_status"] = "评分未达到当前阈值"
+                else:
+                    detail["preselection_status"] = "已退出当前一波"
+                preselection_rows.append(detail)
+            if preselection_rows:
+                self.preselection_details[code] = preselection_rows
+            if candidate is None or candidate.score < self.score_threshold:
+                continue
+            if self.exclude_existing_two_wave and self._is_existing_two_wave_result(
+                hist, self.existing_two_wave_score_threshold
+            ):
+                continue
+            detail = one_wave_to_dict(candidate, hist, self.score_threshold)
+            detail["data_days"] = self.data_days
+            detail["output_dir"] = self.output_dir
+            self.result_details[code] = detail
+            picks.append(code)
+
+        return sorted(
+            picks,
+            key=lambda code: (
+                -self.result_details[code]["timing_score"],
+                -self.result_details[code]["score"],
+                code,
+            ),
+        )
 

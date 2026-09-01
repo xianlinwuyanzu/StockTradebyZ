@@ -33,4 +33,11 @@ else
   ./.venv/bin/python select_stock.py --data-dir "$DATA_DIR" --config "$CONFIG_FILE"
 fi
 
+if [[ "${STOCK_TRACKING_PUSH_ENABLED:-1}" == "1" ]]; then
+  echo "Publishing stock tracking reports..."
+  if ! ./.venv/bin/python publish_stock_tracking_report.py --log ./select_results.log; then
+    echo "Stock tracking report publish failed (daily selection is complete)"
+  fi
+fi
+
 echo "Daily run completed."

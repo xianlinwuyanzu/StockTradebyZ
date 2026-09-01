@@ -19,10 +19,11 @@ from datetime import datetime, timedelta
 # --------------------------- 配置 --------------------------- #
 warnings.filterwarnings("ignore")
 
-# 代理设置
-proxy = 'http://127.0.0.1:7897'
-os.environ['HTTP_PROXY'] = proxy
-os.environ['HTTPS_PROXY'] = proxy
+# 可选代理：未配置时使用系统默认网络，不强制连接本机代理端口。
+proxy = os.environ.get('YF_PROXY', '').strip()
+if proxy:
+    os.environ['HTTP_PROXY'] = proxy
+    os.environ['HTTPS_PROXY'] = proxy
 
 # 修复1: 使用合理的日期范围（避免未来日期）
 END_DATE = datetime.today().strftime("%Y-%m-%d")
