@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>二波收盘价波形画廊</title>
+<style>
+:root { color-scheme: light; font-family: Noto Sans CJK JP, sans-serif; }
+body { margin: 0; color: #0f172a; background: #f8fafc; }
+header { position: sticky; top: 0; z-index: 2; padding: 18px 24px; background: rgba(248,250,252,.96); border-bottom: 1px solid #cbd5e1; backdrop-filter: blur(8px); }
+h1 { margin: 0 0 8px; font-size: 21px; }
+p { margin: 4px 0; color: #475569; font-size: 13px; }
+.controls { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+input { width: min(320px, 80vw); padding: 9px 11px; border: 1px solid #94a3b8; border-radius: 6px; font: inherit; }
+main { padding: 22px; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 18px; }
+.card { background: white; border: 1px solid #dbe3ec; border-radius: 7px; overflow: hidden; box-shadow: 0 2px 8px rgba(15,23,42,.06); }
+.card img { display: block; width: 100%; height: auto; border-bottom: 1px solid #e2e8f0; }
+.meta { padding: 10px 12px 12px; line-height: 1.65; font-size: 12px; color: #475569; }
+.meta strong { color: #0f172a; font-size: 14px; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+<h1>二波收盘价波形画廊</h1>
+<p>共 40 条事件。每张图：前 70 个交易日 + 二波周期 + 第二顶部后最多 50 个交易日。</p>
+<p>图中标记：1起、2起、J买点/预判3起；顶部仅作内部参考标记。</p>
+<div class="controls"><input id="filter" placeholder="输入股票代码筛选，例如 ORCL 或 HOOD" oninput="filterCards()"><span id="count">显示 40 条</span></div>
+</header>
+<main><section class="gallery"><article class="card" data-code="AAL">
+<a href="plots/0001_AAL_20260519_20260701.png"><img loading="lazy" src="plots/0001_AAL_20260519_20260701.png" alt="AAL 二波事件 1"></a>
+<div class="meta"><strong>#1 AAL</strong><br>
+1起 2026-05-19 | 2起 2026-06-05 | 顶部 2026-07-01<br>
+J买点 2026-07-08 | 波段 29 日 | 突破 否</div></article>
+<article class="card" data-code="AMT">
+<a href="plots/0002_AMT_20260514_20260605.png"><img loading="lazy" src="plots/0002_AMT_20260514_20260605.png" alt="AMT 二波事件 2"></a>
+<div class="meta"><strong>#2 AMT</strong><br>
+1起 2026-05-14 | 2起 2026-06-03 | 顶部 2026-06-05<br>
+J买点 - | 波段 15 日 | 突破 否</div></article>
+<article class="card" data-code="BLDR">
+<a href="plots/0003_BLDR_20260407_20260420.png"><img loading="lazy" src="plots/0003_BLDR_20260407_20260420.png" alt="BLDR 二波事件 3"></a>
+<div class="meta"><strong>#3 BLDR</strong><br>
+1起 2026-04-07 | 2起 2026-04-16 | 顶部 2026-04-20<br>
+J买点 2026-04-28 | 波段 9 日 | 突破 否</div></article>
+<article class="card" data-code="CCL">
+<a href="plots/0004_CCL_20260519_20260616.png"><img loading="lazy" src="plots/0004_CCL_20260519_20260616.png" alt="CCL 二波事件 4"></a>
+<div class="meta"><strong>#4 CCL</strong><br>
+1起 2026-05-19 | 2起 2026-06-10 | 顶部 2026-06-16<br>
+J买点 2026-07-06 | 波段 19 日 | 突破 否</div></article>
+<article class="card" data-code="CVNA">
+<a href="plots/0005_CVNA_20260416_20260507.png"><img loading="lazy" src="plots/0005_CVNA_20260416_20260507.png" alt="CVNA 二波事件 5"></a>
+<div class="meta"><strong>#5 CVNA</strong><br>
+1起 2026-04-16 | 2起 2026-05-04 | 顶部 2026-05-07<br>
+J买点 - | 波段 15 日 | 突破 否</div></article>
+<article class="card" data-code="DKNG">
+<a href="plots/0006_DKNG_20260526_20260611.png"><img loading="lazy" src="plots/0006_DKNG_20260526_20260611.png" alt="DKNG 二波事件 6"></a>
+<div class="meta"><strong>#6 DKNG</strong><br>
+1起 2026-05-26 | 2起 2026-06-08 | 顶部 2026-06-11<br>
+J买点 2026-06-18 | 波段 12 日 | 突破 否</div></article>
+<article class="card" data-code="EME">
+<a href="plots/0007_EME_20260416_20260506.png"><img loading="lazy" src="plots/0007_EME_20260416_20260506.png" alt="EME 二波事件 7"></a>
+<div class="meta"><strong>#7 EME</strong><br>
+1起 2026-04-16 | 2起 2026-04-29 | 顶部 2026-05-06<br>
+J买点 2026-05-13 | 波段 14 日 | 突破 否</div></article>
+<article class="card" data-code="EOSE">
+<a href="plots/0008_EOSE_20260505_20260602.png"><img loading="lazy" src="plots/0008_EOSE_20260505_20260602.png" alt="EOSE 二波事件 8"></a>
+<div class="meta"><strong>#8 EOSE</strong><br>
+1起 2026-05-05 | 2起 2026-05-19 | 顶部 2026-06-02<br>
+J买点 - | 波段 19 日 | 突破 否</div></article>
+<article class="card" data-code="EPAM">
+<a href="plots/0009_EPAM_20260514_20260601.png"><img loading="lazy" src="plots/0009_EPAM_20260514_20260601.png" alt="EPAM 二波事件 9"></a>
+<div class="meta"><strong>#9 EPAM</strong><br>
+1起 2026-05-14 | 2起 2026-05-26 | 顶部 2026-06-01<br>
+J买点 - | 波段 11 日 | 突破 否</div></article>
+<article class="card" data-code="FIG">
+<a href="plots/0010_FIG_20260513_20260601.png"><img loading="lazy" src="plots/0010_FIG_20260513_20260601.png" alt="FIG 二波事件 10"></a>
+<div class="meta"><strong>#10 FIG</strong><br>
+1起 2026-05-13 | 2起 2026-05-27 | 顶部 2026-06-01<br>
+J买点 - | 波段 12 日 | 突破 否</div></article>
+<article class="card" data-code="FSLR">
+<a href="plots/0011_FSLR_20260429_20260603.png"><img loading="lazy" src="plots/0011_FSLR_20260429_20260603.png" alt="FSLR 二波事件 11"></a>
+<div class="meta"><strong>#11 FSLR</strong><br>
+1起 2026-04-29 | 2起 2026-05-19 | 顶部 2026-06-03<br>
+J买点 2026-06-08 | 波段 24 日 | 突破 否</div></article>
+<article class="card" data-code="HCA">
+<a href="plots/0012_HCA_20260608_20260707.png"><img loading="lazy" src="plots/0012_HCA_20260608_20260707.png" alt="HCA 二波事件 12"></a>
+<div class="meta"><strong>#12 HCA</strong><br>
+1起 2026-06-08 | 2起 2026-06-18 | 顶部 2026-07-07<br>
+J买点 2026-07-13 | 波段 19 日 | 突破 否</div></article>
+<article class="card" data-code="HOOD">
+<a href="plots/0013_HOOD_20260605_20260706.png"><img loading="lazy" src="plots/0013_HOOD_20260605_20260706.png" alt="HOOD 二波事件 13"></a>
+<div class="meta"><strong>#13 HOOD</strong><br>
+1起 2026-06-05 | 2起 2026-06-25 | 顶部 2026-07-06<br>
+J买点 2026-07-16 | 波段 19 日 | 突破 否</div></article>
+<article class="card" data-code="HRL">
+<a href="plots/0014_HRL_20260515_20260626.png"><img loading="lazy" src="plots/0014_HRL_20260515_20260626.png" alt="HRL 二波事件 14"></a>
+<div class="meta"><strong>#14 HRL</strong><br>
+1起 2026-05-15 | 2起 2026-06-22 | 顶部 2026-06-26<br>
+J买点 2026-07-07 | 波段 28 日 | 突破 否</div></article>
+<article class="card" data-code="HUM">
+<a href="plots/0015_HUM_20260602_20260701.png"><img loading="lazy" src="plots/0015_HUM_20260602_20260701.png" alt="HUM 二波事件 15"></a>
+<div class="meta"><strong>#15 HUM</strong><br>
+1起 2026-06-02 | 2起 2026-06-23 | 顶部 2026-07-01<br>
+J买点 2026-07-16 | 波段 20 日 | 突破 否</div></article>
+<article class="card" data-code="INFY">
+<a href="plots/0016_INFY_20260514_20260601.png"><img loading="lazy" src="plots/0016_INFY_20260514_20260601.png" alt="INFY 二波事件 16"></a>
+<div class="meta"><strong>#16 INFY</strong><br>
+1起 2026-05-14 | 2起 2026-05-26 | 顶部 2026-06-01<br>
+J买点 - | 波段 11 日 | 突破 否</div></article>
+<article class="card" data-code="LRCX">
+<a href="plots/0017_LRCX_20260519_20260615.png"><img loading="lazy" src="plots/0017_LRCX_20260519_20260615.png" alt="LRCX 二波事件 17"></a>
+<div class="meta"><strong>#17 LRCX</strong><br>
+1起 2026-05-19 | 2起 2026-06-05 | 顶部 2026-06-15<br>
+J买点 2026-07-02 | 波段 18 日 | 突破 否</div></article>
+<article class="card" data-code="MAR">
+<a href="plots/0018_MAR_20260504_20260612.png"><img loading="lazy" src="plots/0018_MAR_20260504_20260612.png" alt="MAR 二波事件 18"></a>
+<div class="meta"><strong>#18 MAR</strong><br>
+1起 2026-05-04 | 2起 2026-06-02 | 顶部 2026-06-12<br>
+J买点 2026-06-22 | 波段 28 日 | 突破 否</div></article>
+<article class="card" data-code="MSCI">
+<a href="plots/0019_MSCI_20260410_20260601.png"><img loading="lazy" src="plots/0019_MSCI_20260410_20260601.png" alt="MSCI 二波事件 19"></a>
+<div class="meta"><strong>#19 MSCI</strong><br>
+1起 2026-04-10 | 2起 2026-05-15 | 顶部 2026-06-01<br>
+J买点 2026-06-08 | 波段 35 日 | 突破 否</div></article>
+<article class="card" data-code="NCLH">
+<a href="plots/0020_NCLH_20260519_20260629.png"><img loading="lazy" src="plots/0020_NCLH_20260519_20260629.png" alt="NCLH 二波事件 20"></a>
+<div class="meta"><strong>#20 NCLH</strong><br>
+1起 2026-05-19 | 2起 2026-06-10 | 顶部 2026-06-29<br>
+J买点 2026-07-06 | 波段 27 日 | 突破 否</div></article>
+<article class="card" data-code="NOK">
+<a href="plots/0021_NOK_20260507_20260526.png"><img loading="lazy" src="plots/0021_NOK_20260507_20260526.png" alt="NOK 二波事件 21"></a>
+<div class="meta"><strong>#21 NOK</strong><br>
+1起 2026-05-07 | 2起 2026-05-20 | 顶部 2026-05-26<br>
+J买点 2026-06-08 | 波段 12 日 | 突破 否</div></article>
+<article class="card" data-code="ORCL">
+<a href="plots/0022_ORCL_20260430_20260601.png"><img loading="lazy" src="plots/0022_ORCL_20260430_20260601.png" alt="ORCL 二波事件 22"></a>
+<div class="meta"><strong>#22 ORCL</strong><br>
+1起 2026-04-30 | 2起 2026-05-19 | 顶部 2026-06-01<br>
+J买点 2026-06-09 | 波段 21 日 | 突破 否</div></article>
+<article class="card" data-code="OWL">
+<a href="plots/0023_OWL_20260410_20260505.png"><img loading="lazy" src="plots/0023_OWL_20260410_20260505.png" alt="OWL 二波事件 23"></a>
+<div class="meta"><strong>#23 OWL</strong><br>
+1起 2026-04-10 | 2起 2026-04-29 | 顶部 2026-05-05<br>
+J买点 2026-05-15 | 波段 17 日 | 突破 否</div></article>
+<article class="card" data-code="PLUG">
+<a href="plots/0024_PLUG_20260508_20260527.png"><img loading="lazy" src="plots/0024_PLUG_20260508_20260527.png" alt="PLUG 二波事件 24"></a>
+<div class="meta"><strong>#24 PLUG</strong><br>
+1起 2026-05-08 | 2起 2026-05-20 | 顶部 2026-05-27<br>
+J买点 2026-06-04 | 波段 12 日 | 突破 否</div></article>
+<article class="card" data-code="QCOM">
+<a href="plots/0025_QCOM_20260504_20260529.png"><img loading="lazy" src="plots/0025_QCOM_20260504_20260529.png" alt="QCOM 二波事件 25"></a>
+<div class="meta"><strong>#25 QCOM</strong><br>
+1起 2026-05-04 | 2起 2026-05-19 | 顶部 2026-05-29<br>
+J买点 2026-06-05 | 波段 18 日 | 突破 否</div></article>
+<article class="card" data-code="RIG">
+<a href="plots/0026_RIG_20260420_20260518.png"><img loading="lazy" src="plots/0026_RIG_20260420_20260518.png" alt="RIG 二波事件 26"></a>
+<div class="meta"><strong>#26 RIG</strong><br>
+1起 2026-04-20 | 2起 2026-05-07 | 顶部 2026-05-18<br>
+J买点 2026-05-26 | 波段 20 日 | 突破 否</div></article>
+<article class="card" data-code="SMCI">
+<a href="plots/0027_SMCI_20260429_20260602.png"><img loading="lazy" src="plots/0027_SMCI_20260429_20260602.png" alt="SMCI 二波事件 27"></a>
+<div class="meta"><strong>#27 SMCI</strong><br>
+1起 2026-04-29 | 2起 2026-05-19 | 顶部 2026-06-02<br>
+J买点 2026-06-09 | 波段 23 日 | 突破 否</div></article>
+<article class="card" data-code="SNAP">
+<a href="plots/0028_SNAP_20260402_20260501.png"><img loading="lazy" src="plots/0028_SNAP_20260402_20260501.png" alt="SNAP 二波事件 28"></a>
+<div class="meta"><strong>#28 SNAP</strong><br>
+1起 2026-04-02 | 2起 2026-04-23 | 顶部 2026-05-01<br>
+J买点 2026-05-11 | 波段 20 日 | 突破 否</div></article>
+<article class="card" data-code="STX">
+<a href="plots/0029_STX_20260519_20260622.png"><img loading="lazy" src="plots/0029_STX_20260519_20260622.png" alt="STX 二波事件 29"></a>
+<div class="meta"><strong>#29 STX</strong><br>
+1起 2026-05-19 | 2起 2026-06-10 | 顶部 2026-06-22<br>
+J买点 2026-06-26 | 波段 22 日 | 突破 否</div></article>
+<article class="card" data-code="TJX">
+<a href="plots/0030_TJX_20260515_20260612.png"><img loading="lazy" src="plots/0030_TJX_20260515_20260612.png" alt="TJX 二波事件 30"></a>
+<div class="meta"><strong>#30 TJX</strong><br>
+1起 2026-05-15 | 2起 2026-06-02 | 顶部 2026-06-12<br>
+J买点 2026-06-23 | 波段 19 日 | 突破 否</div></article>
+<article class="card" data-code="TRGP">
+<a href="plots/0031_TRGP_20260420_20260522.png"><img loading="lazy" src="plots/0031_TRGP_20260420_20260522.png" alt="TRGP 二波事件 31"></a>
+<div class="meta"><strong>#31 TRGP</strong><br>
+1起 2026-04-20 | 2起 2026-05-08 | 顶部 2026-05-22<br>
+J买点 2026-05-27 | 波段 24 日 | 突破 否</div></article>
+<article class="card" data-code="TRI">
+<a href="plots/0032_TRI_20260514_20260601.png"><img loading="lazy" src="plots/0032_TRI_20260514_20260601.png" alt="TRI 二波事件 32"></a>
+<div class="meta"><strong>#32 TRI</strong><br>
+1起 2026-05-14 | 2起 2026-05-27 | 顶部 2026-06-01<br>
+J买点 - | 波段 11 日 | 突破 否</div></article>
+<article class="card" data-code="UDR">
+<a href="plots/0033_UDR_20260601_20260707.png"><img loading="lazy" src="plots/0033_UDR_20260601_20260707.png" alt="UDR 二波事件 33"></a>
+<div class="meta"><strong>#33 UDR</strong><br>
+1起 2026-06-01 | 2起 2026-06-18 | 顶部 2026-07-07<br>
+J买点 2026-07-09 | 波段 24 日 | 突破 否</div></article>
+<article class="card" data-code="VRT">
+<a href="plots/0034_VRT_20260416_20260506.png"><img loading="lazy" src="plots/0034_VRT_20260416_20260506.png" alt="VRT 二波事件 34"></a>
+<div class="meta"><strong>#34 VRT</strong><br>
+1起 2026-04-16 | 2起 2026-04-28 | 顶部 2026-05-06<br>
+J买点 2026-05-18 | 波段 14 日 | 突破 否</div></article>
+<article class="card" data-code="VRT">
+<a href="plots/0035_VRT_20260428_20260514.png"><img loading="lazy" src="plots/0035_VRT_20260428_20260514.png" alt="VRT 二波事件 35"></a>
+<div class="meta"><strong>#35 VRT</strong><br>
+1起 2026-04-28 | 2起 2026-05-08 | 顶部 2026-05-14<br>
+J买点 - | 波段 12 日 | 突破 否</div></article>
+<article class="card" data-code="WAT">
+<a href="plots/0036_WAT_20260429_20260529.png"><img loading="lazy" src="plots/0036_WAT_20260429_20260529.png" alt="WAT 二波事件 36"></a>
+<div class="meta"><strong>#36 WAT</strong><br>
+1起 2026-04-29 | 2起 2026-05-19 | 顶部 2026-05-29<br>
+J买点 2026-06-10 | 波段 21 日 | 突破 否</div></article>
+<article class="card" data-code="WDC">
+<a href="plots/0037_WDC_20260519_20260618.png"><img loading="lazy" src="plots/0037_WDC_20260519_20260618.png" alt="WDC 二波事件 37"></a>
+<div class="meta"><strong>#37 WDC</strong><br>
+1起 2026-05-19 | 2起 2026-06-10 | 顶部 2026-06-18<br>
+J买点 2026-06-26 | 波段 21 日 | 突破 否</div></article>
+<article class="card" data-code="WMB">
+<a href="plots/0038_WMB_20260421_20260519.png"><img loading="lazy" src="plots/0038_WMB_20260421_20260519.png" alt="WMB 二波事件 38"></a>
+<div class="meta"><strong>#38 WMB</strong><br>
+1起 2026-04-21 | 2起 2026-05-08 | 顶部 2026-05-19<br>
+J买点 2026-05-27 | 波段 20 日 | 突破 否</div></article>
+<article class="card" data-code="WULF">
+<a href="plots/0039_WULF_20260518_20260618.png"><img loading="lazy" src="plots/0039_WULF_20260518_20260618.png" alt="WULF 二波事件 39"></a>
+<div class="meta"><strong>#39 WULF</strong><br>
+1起 2026-05-18 | 2起 2026-06-10 | 顶部 2026-06-18<br>
+J买点 2026-06-25 | 波段 22 日 | 突破 否</div></article>
+<article class="card" data-code="ZS">
+<a href="plots/0040_ZS_20260430_20260526.png"><img loading="lazy" src="plots/0040_ZS_20260430_20260526.png" alt="ZS 二波事件 40"></a>
+<div class="meta"><strong>#40 ZS</strong><br>
+1起 2026-04-30 | 2起 2026-05-12 | 顶部 2026-05-26<br>
+J买点 - | 波段 17 日 | 突破 否</div></article></section></main>
+<script>
+function filterCards() {
+  const query = document.getElementById('filter').value.trim().toUpperCase();
+  let visible = 0;
+  document.querySelectorAll('.card').forEach(card => {
+    const show = !query || card.dataset.code.toUpperCase().includes(query);
+    card.classList.toggle('hidden', !show);
+    if (show) visible++;
+  });
+  document.getElementById('count').textContent = `显示 ${visible} 条`;
+}
+</script>
+</body>
+</html>
