@@ -15,6 +15,7 @@ import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
 from datetime import datetime, timedelta
+from safe_io import is_safe_ticker, write_dataframe_csv
 
 # --------------------------- 配置 --------------------------- #
 warnings.filterwarnings("ignore")
@@ -94,7 +95,8 @@ def _normalize_ticker(code: str) -> str:
     s = str(code).strip().upper()
     if not s or s in {"UNKNOWN", "NAN", "NONE", "NULL"}:
         return ""
-    return s.replace(".", "-")
+    normalized = s.replace(".", "-")
+    return normalized if is_safe_ticker(normalized) else ""
 
 
 def _clean_profile_value(value: object) -> str:
@@ -346,8 +348,7 @@ def process_and_save_data(
         df = df[required_columns]
         
         # 保存为CSV
-        output_path = output_dir / f"{ticker}.csv"
-        df.to_csv(output_path, index=False)
+        write_dataframe_csv(df, output_dir, ticker)
         
         logger.debug(f"{ticker}: 保存成功，{len(df)} 行数据")
         return True
@@ -401,7 +402,7 @@ def load_stock_list(stocklist_path: Path) -> List[str]:
 # --------------------------- 主程序 --------------------------- #
 def main():
     parser = argparse.ArgumentParser(description="批量下载美股日线数据")
-    parser.add_argument("--stocklist", type=Path, default="./data/tools/stocklist_us_20260426.csv", 
+    parser.add_argument("--stocklist", type=Path, default="./data/tools/stocklist_sp400_20260902.csv",
                        help="股票列表CSV文件路径")
     parser.add_argument("--out", type=Path, default="./data/us_stocks", 
                        help="输出目录")

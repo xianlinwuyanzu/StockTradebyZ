@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ma_launch import evaluate_ma_launch
 from scan_three_wave import (
     NARROW_DEFAULTS,
     PivotZone,
@@ -584,7 +585,7 @@ def one_wave_to_dict(
     def date_at(index: int) -> str:
         return pd.Timestamp(frame["date"].iloc[index]).date().isoformat()
 
-    return {
+    result = {
         "code": candidate.code,
         "as_of_date": date_at(len(frame) - 1),
         "cycle_start_date": date_at(candidate.start1.start),
@@ -640,3 +641,5 @@ def one_wave_to_dict(
         "max_observation_after_reference": candidate.current_period,
         "latest_close": float(frame["close"].iloc[-1]),
     }
+    result.update(evaluate_ma_launch(frame, candidate.start1.start))
+    return result

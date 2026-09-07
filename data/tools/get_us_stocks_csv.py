@@ -2,6 +2,7 @@
 
 Sources:
     - S&P 500 constituents (GICS sector and sub-industry)
+    - S&P MidCap 400 constituents (official MDY holdings)
     - Nasdaq-100 constituents
     - Yahoo most-active stocks
     - Yahoo equity screener, limited to the largest stocks in each major sector
@@ -15,8 +16,12 @@ from __future__ import annotations
 
 import logging
 import argparse
+import re
 import sys
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
+from xml.etree import ElementTree as ET
 
 import pandas as pd
 import requests
@@ -88,6 +93,10 @@ _SP500_CSV_URL = (
     "https://raw.githubusercontent.com/datasets/"
     "s-and-p-500-companies/main/data/constituents.csv"
 )
+_SP400_HOLDINGS_URL = (
+    "https://www.ssga.com/library-content/products/fund-data/etfs/us/"
+    "holdings-daily-us-en-mdy.xlsx"
+)
 
 
 def _clean_text(value: object, fallback: str = "Unknown") -> str:
@@ -139,6 +148,94 @@ def get_sp500() -> pd.DataFrame:
     })
     result = result[result["symbol"] != ""].reset_index(drop=True)
     logger.info("标普500: %d 只", len(result))
+    return result
+
+
+def _xlsx_column_index(reference: str) -> int:
+    letters = re.sub(r"[0-9]+$", "", reference)
+    index = 0
+    for letter in letters:
+        index = index * 26 + ord(letter) - ord("A") + 1
+    return index - 1
+
+
+def _read_xlsx_rows(payload: bytes) -> list[list[str]]:
+    namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    namespaced = {"main": namespace}
+    with ZipFile(BytesIO(payload)) as workbook:
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in workbook.namelist():
+            shared_root = ET.fromstring(workbook.read("xl/sharedStrings.xml"))
+            shared_strings = [
+                "".join(text.text or "" for text in item.iter(f"{{{namespace}}}t"))
+                for item in shared_root.findall("main:si", namespaced)
+            ]
+
+        sheet_root = ET.fromstring(workbook.read("xl/worksheets/sheet1.xml"))
+        rows: list[list[str]] = []
+        for row_element in sheet_root.findall(".//main:row", namespaced):
+            values: dict[int, str] = {}
+            for cell in row_element.findall("main:c", namespaced):
+                cell_value = cell.find("main:v", namespaced)
+                text = "" if cell_value is None else cell_value.text or ""
+                if cell.attrib.get("t") == "s" and text:
+                    text = shared_strings[int(text)]
+                elif cell.attrib.get("t") == "inlineStr":
+                    text = "".join(text_node.text or "" for text_node in cell.iter(f"{{{namespace}}}t"))
+                values[_xlsx_column_index(cell.attrib["r"])] = text
+            if values:
+                rows.append([values.get(index, "") for index in range(max(values) + 1)])
+        return rows
+
+
+def get_sp400() -> pd.DataFrame:
+    """从 State Street 的 MDY 官方持仓文件获取标普中盘 400 成分股。"""
+    logger.info("获取标普中盘400成分股（MDY 官方持仓）...")
+    response = requests.get(_SP400_HOLDINGS_URL, headers=_HEADERS, timeout=30)
+    response.raise_for_status()
+    rows = _read_xlsx_rows(response.content)
+    header_index = next(
+        (index for index, row in enumerate(rows) if len(row) >= 2 and row[0] == "Name" and row[1] == "Ticker"),
+        None,
+    )
+    if header_index is None:
+        raise ValueError("未在 MDY 持仓文件找到 Name/Ticker 表头")
+
+    header = rows[header_index]
+    column_index = {name: index for index, name in enumerate(header)}
+    required_columns = {"Name", "Ticker", "Sector"}
+    if not required_columns.issubset(column_index):
+        raise ValueError(f"MDY 持仓文件缺少字段: {sorted(required_columns - set(column_index))}")
+
+    records: list[dict[str, str]] = []
+    for row in rows[header_index + 1:]:
+        ticker = row[column_index["Ticker"]].strip() if len(row) > column_index["Ticker"] else ""
+        if not ticker:
+            continue
+        sector = row[column_index["Sector"]].strip() if len(row) > column_index["Sector"] else ""
+        name = row[column_index["Name"]].strip() if len(row) > column_index["Name"] else ""
+        if ticker.upper().startswith("CASH_") or sector == "Unassigned":
+            continue
+        symbol = _normalize_symbol(ticker)
+        if not symbol:
+            continue
+        records.append({
+            "ts_code": symbol,
+            "symbol": symbol,
+            "name": _clean_text(name, fallback=symbol),
+            "area": "US",
+            "industry": _clean_text(sector),
+            "sector": _clean_text(sector),
+            "industry_detail": "Unknown",
+            "asset_type": "stock",
+            "source": "sp400",
+        })
+
+    result = pd.DataFrame(records, columns=STOCK_COLUMNS)
+    result = result[result["symbol"] != ""].drop_duplicates("symbol").reset_index(drop=True)
+    if len(result) != 400 or result["symbol"].nunique() != 400:
+        raise ValueError(f"S&P 400 成分股数量异常: rows={len(result)}, unique={result['symbol'].nunique()}")
+    logger.info("标普中盘400: %d 只", len(result))
     return result
 
 
@@ -317,6 +414,7 @@ def main() -> None:
     args = parser.parse_args()
 
     sp500_df = get_sp500()
+    sp400_df = get_sp400()
     nasdaq_df = get_nasdaq100()
     actives_df = get_most_actives(count=max(0, args.active_count))
     sector_df = (
@@ -325,14 +423,14 @@ def main() -> None:
         else get_major_sector_stocks(count=max(0, args.sector_count))
     )
 
-    merged = merge_stock_sources([sp500_df, nasdaq_df, actives_df, sector_df])
+    merged = merge_stock_sources([sp500_df, sp400_df, nasdaq_df, actives_df, sector_df])
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     merged.to_csv(args.output, index=False)
     counts = merged.groupby("sector").size().reindex(GICS_SECTORS, fill_value=0)
     logger.info(
-        "完成：标普500=%d，纳斯达克100=%d，最活跃=%d，行业筛选=%d，合并去重=%d → %s",
-        len(sp500_df), len(nasdaq_df), len(actives_df), len(sector_df), len(merged), args.output,
+        "完成：标普500=%d，标普中盘400=%d，纳斯达克100=%d，最活跃=%d，行业筛选=%d，合并去重=%d → %s",
+        len(sp500_df), len(sp400_df), len(nasdaq_df), len(actives_df), len(sector_df), len(merged), args.output,
     )
     logger.info("一级行业覆盖：%s", "; ".join(f"{sector}={count}" for sector, count in counts.items()))
 

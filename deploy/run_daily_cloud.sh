@@ -10,15 +10,12 @@ TRADE_DATE="${TRADE_DATE:-}"
 cd "$PROJECT_DIR"
 mkdir -p ./logs
 
+source ./deploy/load_env.sh
+load_env_file ./.env
+
 if [[ ! -f ./.venv/bin/python ]]; then
   echo "Missing virtual environment. Run deploy/bootstrap_venv.sh first."
   exit 1
-fi
-
-if [[ -f ./.env ]]; then
-  set -a
-  source ./.env
-  set +a
 fi
 
 if [[ -z "${TUSHARE_TOKEN:-}" ]]; then

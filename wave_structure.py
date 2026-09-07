@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ma_launch import evaluate_ma_launch
 from scan_three_wave import (
     NARROW_DEFAULTS,
     PivotZone,
@@ -1064,7 +1065,7 @@ def active_wave_to_dict(candidate: ActiveWave, frame: pd.DataFrame, score_thresh
     def date_at(index: int) -> str:
         return pd.Timestamp(frame["date"].iloc[index]).date().isoformat()
 
-    return {
+    result = {
         "code": candidate.code,
         "as_of_date": date_at(len(frame) - 1),
         "cycle_start_date": date_at(candidate.starts[0].start),
@@ -1166,3 +1167,5 @@ def active_wave_to_dict(candidate: ActiveWave, frame: pd.DataFrame, score_thresh
         "start_j_values": list(candidate.start_j_values),
         "latest_close": float(frame["close"].iloc[-1]),
     }
+    result.update(evaluate_ma_launch(frame, candidate.starts[0].start))
+    return result

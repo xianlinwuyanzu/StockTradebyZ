@@ -245,6 +245,71 @@ def build_wave_payload(wave_json_path: Path, generated_at: datetime, fallback_tr
     }
 
 
+def _payload_size_mb(payload: dict[str, Any]) -> float:
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return len(body) / 1024 / 1024
+
+
+def _sorted_preselection_rows(rows: list[Any]) -> list[Any]:
+    def row_sort_key(item: Any) -> tuple[str, str, str]:
+        if not isinstance(item, dict):
+            return ("", "", "")
+        return (
+            str(item.get("current_start_date") or ""),
+            str(item.get("j2_reference_date") or ""),
+            str(item.get("code") or ""),
+        )
+
+    return sorted(rows, key=row_sort_key, reverse=True)
+
+
+def _compact_wave_payload(
+    payload: dict[str, Any],
+    *,
+    max_payload_mb: float,
+    preselection_limit: int,
+) -> tuple[dict[str, Any], float, list[str]]:
+    compacted_payload = dict(payload)
+    notes: list[str] = []
+    size_mb = _payload_size_mb(compacted_payload)
+    if size_mb <= max_payload_mb:
+        return compacted_payload, size_mb, notes
+
+    preselection_rows = compacted_payload.get("preselection_results")
+    if not isinstance(preselection_rows, list) or not preselection_rows:
+        return compacted_payload, size_mb, notes
+
+    if preselection_limit >= 0:
+        ordered_rows = _sorted_preselection_rows(preselection_rows)
+        trimmed_rows = ordered_rows[:preselection_limit]
+        if len(trimmed_rows) < len(preselection_rows):
+            compacted_payload["preselection_results"] = trimmed_rows
+            size_mb = _payload_size_mb(compacted_payload)
+            notes.append(f"preselection trimmed {len(trimmed_rows)}/{len(preselection_rows)}")
+            preselection_rows = trimmed_rows
+            if size_mb <= max_payload_mb:
+                return compacted_payload, size_mb, notes
+
+    lightweight_rows: list[Any] = []
+    for item in preselection_rows:
+        if isinstance(item, dict) and "recent_daily_data" in item:
+            lightweight = dict(item)
+            lightweight.pop("recent_daily_data", None)
+            lightweight_rows.append(lightweight)
+        else:
+            lightweight_rows.append(item)
+    compacted_payload["preselection_results"] = lightweight_rows
+    size_mb = _payload_size_mb(compacted_payload)
+    notes.append("preselection stripped recent_daily_data")
+    if size_mb <= max_payload_mb:
+        return compacted_payload, size_mb, notes
+
+    compacted_payload["preselection_results"] = []
+    size_mb = _payload_size_mb(compacted_payload)
+    notes.append("preselection dropped to empty list")
+    return compacted_payload, size_mb, notes
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Publish latest stock strategy picks to backend API")
     parser.add_argument("--log", default="./select_results.log", help="Path to selector log file")
@@ -253,9 +318,13 @@ def main() -> int:
     parser.add_argument("--wave-json", default="./wave_selection_data/wave_selection_results.json", help="Path to wave selection structured json")
     parser.add_argument("--one-wave-api-url", default=os.getenv("ONE_WAVE_ENTRY_API_URL", ""))
     parser.add_argument("--one-wave-json", default="./one_wave_entry_data/wave_selection_results.json", help="Path to one-wave entry structured json")
-    parser.add_argument("--token", default=os.getenv("STOCK_TRACKING_PUSH_TOKEN", "change-me-stock-tracking-token"))
+    parser.add_argument("--wave-max-payload-mb", type=float, default=float(os.getenv("WAVE_PUSH_MAX_PAYLOAD_MB", "45")))
+    parser.add_argument("--preselection-push-limit", type=int, default=int(os.getenv("WAVE_PRESELECTION_PUSH_LIMIT", "600")))
+    parser.add_argument("--token", default=os.getenv("STOCK_TRACKING_PUSH_TOKEN"))
     parser.add_argument("--timeout", type=int, default=20)
     args = parser.parse_args()
+    if not args.token:
+        parser.error("STOCK_TRACKING_PUSH_TOKEN is required")
 
     log_path = Path(args.log)
     if not log_path.exists():
@@ -290,6 +359,14 @@ def main() -> int:
     if wave_payload is None:
         print(f"[stock-tracking] wave payload not found or invalid: {args.wave_json}")
     else:
+        wave_payload, wave_payload_size_mb, wave_notes = _compact_wave_payload(
+            wave_payload,
+            max_payload_mb=args.wave_max_payload_mb,
+            preselection_limit=args.preselection_push_limit,
+        )
+        if wave_notes:
+            print(f"[stock-tracking] wave payload compacted: {'; '.join(wave_notes)}")
+        print(f"[stock-tracking] wave payload size: {wave_payload_size_mb:.2f} MB")
         wave_api_url = _derive_wave_api_url(args.api_url, args.wave_api_url)
         try:
             wave_response = requests.post(
@@ -307,6 +384,14 @@ def main() -> int:
     if one_wave_payload is None:
         print(f"[stock-tracking] one-wave payload not found or invalid: {args.one_wave_json}")
     else:
+        one_wave_payload, one_wave_payload_size_mb, one_wave_notes = _compact_wave_payload(
+            one_wave_payload,
+            max_payload_mb=args.wave_max_payload_mb,
+            preselection_limit=args.preselection_push_limit,
+        )
+        if one_wave_notes:
+            print(f"[stock-tracking] one-wave payload compacted: {'; '.join(one_wave_notes)}")
+        print(f"[stock-tracking] one-wave payload size: {one_wave_payload_size_mb:.2f} MB")
         one_wave_api_url = _derive_one_wave_api_url(args.api_url, args.one_wave_api_url)
         try:
             one_wave_response = requests.post(

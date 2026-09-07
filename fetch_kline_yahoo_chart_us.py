@@ -12,9 +12,10 @@ from typing import Any
 
 import pandas as pd
 import requests
+from safe_io import is_safe_ticker, ticker_csv_path, write_dataframe_csv
 
 PROFILE_FALLBACK = "Unknown"
-DEFAULT_STOCKLIST = Path("./data/tools/stocklist_us_20260426.csv")
+DEFAULT_STOCKLIST = Path("./data/tools/stocklist_sp400_20260902.csv")
 DEFAULT_OUT = Path("./data/us_stocks")
 DEFAULT_DAYS = 300
 DEFAULT_HOST = os.environ.get("YAHOO_CHART_HOST", "query1.finance.yahoo.com")
@@ -39,7 +40,8 @@ def normalize_ticker(value: object) -> str:
         return ""
     if symbol.endswith(".US"):
         symbol = symbol[:-3]
-    return symbol.replace(".", "-")
+    normalized = symbol.replace(".", "-")
+    return normalized if is_safe_ticker(normalized) else ""
 
 
 def clean_profile_value(value: object) -> str:
@@ -208,7 +210,7 @@ def save_frame(ticker: str, frame: pd.DataFrame, output_dir: Path, profile: dict
     output["sector"] = clean_profile_value(profile.get("sector")) or PROFILE_FALLBACK
     output["industry"] = clean_profile_value(profile.get("industry")) or PROFILE_FALLBACK
     output = output[["date", "open", "close", "high", "low", "volume", "sector", "industry"]]
-    output.to_csv(output_dir / f"{ticker}.csv", index=False)
+    write_dataframe_csv(output, output_dir, ticker)
     return True
 
 
@@ -250,11 +252,12 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     if args.skip_fresh_days > 0:
         before = len(tickers)
-        tickers = [
-            ticker for ticker in tickers
-            if not (args.out / f"{ticker}.csv").exists()
-            or (time.time() - (args.out / f"{ticker}.csv").stat().st_mtime) / 86400 >= args.skip_fresh_days
-        ]
+        fresh_candidates: list[str] = []
+        for ticker in tickers:
+            output_path = ticker_csv_path(args.out, ticker)
+            if not output_path.exists() or (time.time() - output_path.stat().st_mtime) / 86400 >= args.skip_fresh_days:
+                fresh_candidates.append(ticker)
+        tickers = fresh_candidates
         logger.info("skip fresh files: %d, remaining: %d", before - len(tickers), len(tickers))
 
     success = 0

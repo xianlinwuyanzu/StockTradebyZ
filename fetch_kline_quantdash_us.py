@@ -15,17 +15,19 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from quantdash import QuantDash
 from tqdm import tqdm
+from safe_io import is_safe_ticker, ticker_csv_path, write_dataframe_csv
 
 PROFILE_FALLBACK = "Unknown"
 
-DEFAULT_STOCKLIST = Path("./data/tools/stocklist_us_20260426.csv")
+DEFAULT_STOCKLIST = Path("./data/tools/stocklist_sp400_20260902.csv")
 DEFAULT_OUT = Path("./data/us_stocks")
-DEFAULT_DAYS = 300
+DEFAULT_DAYS = 900
 DEFAULT_PERIOD = "1d"
 DEFAULT_BATCH_SIZE = 40
 DEFAULT_QD_BATCH_SIZE = 100
 DEFAULT_MAX_WORKERS = 4
 DEFAULT_TIMEOUT_WAIT = 30
+DEFAULT_COUNT = 500
 MAX_RETRIES = int(os.environ.get("QD_MAX_RETRIES", "3"))
 SINGLE_REQUEST_PAUSE = float(os.environ.get("QD_REQ_INTERVAL", "0.35"))
 QD_SDK_MAX_RETRIES = int(os.environ.get("QD_SDK_MAX_RETRIES", "0"))
@@ -55,7 +57,8 @@ def _normalize_ticker(code: str) -> str:
     s = str(code).strip().upper()
     if not s or s in {"UNKNOWN", "NAN", "NONE", "NULL"}:
         return ""
-    return s.replace("_", "-")
+    normalized = s.replace("_", "-")
+    return normalized if is_safe_ticker(normalized) else ""
 
 
 def _normalize_market_symbol(symbol: str, default_market: str = "US") -> str:
@@ -126,6 +129,15 @@ def _get_local_latest_trade_date(csv_path: Path) -> Optional[date]:
     return _try_parse_trade_date(df["date"].iloc[-1])
 
 
+def _get_local_row_count(csv_path: Path) -> int:
+    if not csv_path.exists():
+        return 0
+    try:
+        return int(pd.read_csv(csv_path, usecols=["date"]).shape[0])
+    except Exception:
+        return 0
+
+
 def _get_benchmark_latest_trade_date(qd: QuantDash, symbol: str, period: str) -> Optional[date]:
     """Probe one benchmark symbol to detect what the provider currently considers latest daily bar date."""
     try:
@@ -176,15 +188,19 @@ def _filter_up_to_date_symbols(
     qd_symbol_to_ticker: Dict[str, str],
     out_dir: Path,
     target_trade_date: date,
+    minimum_rows: int = 0,
 ) -> Tuple[List[str], int]:
     remaining: List[str] = []
     skipped = 0
 
     for qsym in symbols:
         ticker = qd_symbol_to_ticker[qsym]
-        csv_path = out_dir / f"{ticker}.csv"
+        csv_path = ticker_csv_path(out_dir, ticker)
         local_latest = _get_local_latest_trade_date(csv_path)
         if local_latest is not None and local_latest >= target_trade_date:
+            if minimum_rows > 0 and _get_local_row_count(csv_path) < minimum_rows:
+                remaining.append(qsym)
+                continue
             skipped += 1
             continue
         remaining.append(qsym)
@@ -461,8 +477,11 @@ def _save_one(
     std["sector"] = _clean_profile_value(profile.get("sector", "")) or PROFILE_FALLBACK
     std["industry"] = _clean_profile_value(profile.get("industry", "")) or PROFILE_FALLBACK
 
-    out_path = out_dir / f"{ticker}.csv"
-    std.to_csv(out_path, index=False)
+    try:
+        write_dataframe_csv(std, out_dir, ticker)
+    except (OSError, ValueError) as exc:
+        logger.warning("failed to save %s: %s", ticker, exc)
+        return False
     return True
 
 
@@ -611,7 +630,7 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="symbols per request batch")
     parser.add_argument("--qd-batch-size", type=int, default=DEFAULT_QD_BATCH_SIZE, help="QuantDash SDK internal batch size")
     parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS, help="QuantDash SDK max workers")
-    parser.add_argument("--count", type=int, default=0, help="optional count limit; 0 means disabled")
+    parser.add_argument("--count", type=int, default=DEFAULT_COUNT, help="number of daily bars to request")
     parser.add_argument("--skip-fresh-days", type=float, default=0.0,
                         help="legacy mtime-based skip window in days; for daily mode, date-based skip is preferred")
     parser.add_argument("--skip-if-up-to-date", dest="skip_if_up_to_date", action="store_true", default=True,
@@ -677,6 +696,7 @@ def main() -> int:
             qd_symbol_to_ticker=qd_symbol_to_ticker,
             out_dir=args.out,
             target_trade_date=target_trade_date,
+            minimum_rows=max(0, args.count),
         )
         if skipped > 0:
             logger.info(

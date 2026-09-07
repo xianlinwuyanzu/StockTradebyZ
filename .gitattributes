@@ -1,0 +1,5 @@
+# Avoid expensive diffs if generated artifacts are accidentally tracked again.
+one_wave_entry_data/** -text -diff -merge linguist-generated=true
+wave_selection_data/** -text -diff -merge linguist-generated=true
+jxt_v7/output/** -text -diff -merge linguist-generated=true
+selection_dashboard.html -diff

@@ -1,33 +1,49 @@
 # Python caches / virtual env
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
+.pytest_cache/
 
 # Node assets
 node_modules/
 
 # Runtime logs and temp
+logs/
 *.log
 *.tmp
 *.bak
-logs/
 
-# Generated market data and caches
-data/
+# Local research workspace (all experimental code and outputs)
+analysis/
+
+# Market data cache (keep data/tools source scripts)
+data/*
+!data/tools/
+!data/tools/**
+data/tools/__pycache__/
+data/tools/stocklist_*.csv
+stocklist*.csv
 stock_data_cache/
 jxt_v7/cache/
 jxt_v7/output/
 
-# Generated CSV and PNG artifacts
-*.csv
-*.png
-
-# Generated reports / backtest outputs
-backtest_*.csv
-backtest_*.png
+# Generated strategy artifacts
+one_wave_entry_data/
+wave_selection_data/
 selection_dashboard.html
 selection_intersections.csv
 selection_overlap.png
+
+# Timestamped output snapshots / reports
+analysis_*_20*/
+two_wave_visualizations_*/
+two_wave_no_three_wave_visualizations_*/
+backtest_two_wave_*_20*/
+backtest_one_wave_*_20*/
+benchmark_data_sources_20*/
+sample_two_wave_validation_20*/
+three_wave_candidates_20*.md
+wave_sample_quality_analysis_20*.md
 
 # Optional local env file
 .env

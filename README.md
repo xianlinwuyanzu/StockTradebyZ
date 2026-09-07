@@ -60,8 +60,7 @@ source .venv/bin/activate
 cd /path/to/your/project
 
 # 安装依赖（全部环境依赖统一在 requirements.txt）
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r requirements.txt
+python -m pip install --disable-pip-version-check --only-binary=:all: -r requirements.txt
 ```
 
 > 关键依赖：`pandas`, `tqdm`, `tushare`, `numpy`, `scipy`, `yfinance`, `matplotlib`, `requests`, `lxml`。
@@ -229,7 +228,8 @@ export YAHOO_CHART_SKIP_FRESH_DAYS=0
 比较三个数据源的网络效率，不会改写 `data/us_stocks`：
 
 ```bash
-set -a; source .env; set +a
+source ./deploy/load_env.sh
+load_env_file .env
 ./.venv/bin/python benchmark_data_sources.py --days 60
 ```
 

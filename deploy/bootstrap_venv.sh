@@ -13,8 +13,7 @@ if ! command -v "$PY_BIN" >/dev/null 2>&1; then
 fi
 
 "$PY_BIN" -m venv .venv
-./.venv/bin/python -m pip install --upgrade pip setuptools wheel
-./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -m pip install --disable-pip-version-check --only-binary=:all: -r requirements.txt
 ./.venv/bin/python -m pip check
 
 echo "Bootstrap complete."
