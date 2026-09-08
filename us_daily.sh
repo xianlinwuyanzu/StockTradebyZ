@@ -18,6 +18,11 @@ CONFIG_FILE="${CONFIG_FILE:-./configs.json}"
 TRADE_DATE="${TRADE_DATE:-}"
 QD_DAYS="${QD_DAYS:-900}"
 QD_COUNT="${QD_COUNT:-500}"
+FRED_SPX_ENABLED="${FRED_SPX_ENABLED:-1}"
+FRED_SPX_SERIES_ID="${FRED_SPX_SERIES_ID:-SP500}"
+FRED_SPX_OUTPUT="${FRED_SPX_OUTPUT:-./data/indices/SPX_FRED.csv}"
+FRED_SPX_TIMEOUT="${FRED_SPX_TIMEOUT:-20}"
+FRED_SPX_STRICT="${FRED_SPX_STRICT:-0}"
 
 ensure_python_env() {
 	if ! command -v "$PY_BIN" >/dev/null 2>&1; then
@@ -68,6 +73,17 @@ case "$DATA_SOURCE" in
 		exit 1
 		;;
 esac
+
+if [[ "$FRED_SPX_ENABLED" == "1" ]]; then
+	echo ">>> 拉取指数数据: FRED ${FRED_SPX_SERIES_ID}"
+	if ! run_timed_stage fetch_spx "$PY_BIN" -m data_fetch.fetch_index_fred --series-id "$FRED_SPX_SERIES_ID" --output "$FRED_SPX_OUTPUT" --timeout "$FRED_SPX_TIMEOUT"; then
+		if [[ "$FRED_SPX_STRICT" == "1" ]]; then
+			echo ">>> FRED 指数拉取失败，且 FRED_SPX_STRICT=1，终止日更"
+			exit 1
+		fi
+		echo ">>> FRED 指数拉取失败，已跳过（FRED_SPX_STRICT=0）"
+	fi
+fi
 
 echo ">>> 开始选股..."
 selection_args=(--data-dir "$DATA_DIR" --config "$CONFIG_FILE")

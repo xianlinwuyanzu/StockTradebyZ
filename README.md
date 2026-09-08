@@ -271,6 +271,27 @@ export DATA_SOURCE=yahoo_chart
 bash us_daily.sh
 ```
 
+### SPX 指数单独拉取（FRED）
+
+`us_daily.sh` 现在支持在个股数据源之外，单独拉取一份 SPX 指数文件（默认 FRED `SP500`）。
+
+默认开启，输出到 `./data/indices/SPX_FRED.csv`。若 FRED 暂时不可用，默认只告警并继续后续选股流程。
+
+```bash
+export FRED_SPX_ENABLED=1
+export FRED_SPX_SERIES_ID=SP500
+export FRED_SPX_OUTPUT=./data/indices/SPX_FRED.csv
+export FRED_SPX_TIMEOUT=20
+export FRED_SPX_STRICT=0
+bash us_daily.sh
+```
+
+说明：
+
+* `FRED_SPX_STRICT=0`：FRED 拉取失败时不阻断日更（默认）。
+* `FRED_SPX_STRICT=1`：FRED 拉取失败时整次日更失败退出。
+* 该文件是指数序列的独立输出，不替代个股 K 线主数据源。
+
 Yahoo Chart API 默认调用 `query1.finance.yahoo.com`，可通过以下环境变量调整请求行为：
 
 ```bash
