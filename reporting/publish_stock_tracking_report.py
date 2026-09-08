@@ -232,7 +232,7 @@ def build_wave_payload(wave_json_path: Path, generated_at: datetime, fallback_tr
         preselection_results = []
     preselection_count = int(raw.get("preselection_count") or len(preselection_results))
 
-    return {
+    payload = {
         "generated_at": generated_at.isoformat(),
         "trade_date": resolved_trade_day,
         "strategy": strategy_name,
@@ -243,6 +243,22 @@ def build_wave_payload(wave_json_path: Path, generated_at: datetime, fallback_tr
         "preselection_count": preselection_count,
         "preselection_results": preselection_results,
     }
+    if "historical_results" in raw or "history_window_days" in raw:
+        historical_results = raw.get("historical_results")
+        if not isinstance(historical_results, list):
+            historical_results = []
+        historical_trade_dates = raw.get("historical_trade_dates")
+        if not isinstance(historical_trade_dates, list):
+            historical_trade_dates = []
+        payload.update({
+            "history_window_days": int(raw.get("history_window_days") or 0),
+            "historical_result_count": int(
+                raw.get("historical_result_count") or len(historical_results)
+            ),
+            "historical_results": historical_results,
+            "historical_trade_dates": historical_trade_dates,
+        })
+    return payload
 
 
 def _payload_size_mb(payload: dict[str, Any]) -> float:
@@ -263,11 +279,29 @@ def _sorted_preselection_rows(rows: list[Any]) -> list[Any]:
     return sorted(rows, key=row_sort_key, reverse=True)
 
 
+def _sorted_historical_rows(rows: list[Any]) -> list[Any]:
+    def row_sort_key(item: Any) -> tuple[str, float, str]:
+        if not isinstance(item, dict):
+            return ("", float("-inf"), "")
+        try:
+            timing_score = float(item.get("timing_score", float("-inf")))
+        except (TypeError, ValueError):
+            timing_score = float("-inf")
+        return (
+            str(item.get("selected_trade_date") or ""),
+            timing_score,
+            str(item.get("code") or ""),
+        )
+
+    return sorted(rows, key=row_sort_key, reverse=True)
+
+
 def _compact_wave_payload(
     payload: dict[str, Any],
     *,
     max_payload_mb: float,
     preselection_limit: int,
+    historical_limit: int = 500,
 ) -> tuple[dict[str, Any], float, list[str]]:
     compacted_payload = dict(payload)
     notes: list[str] = []
@@ -276,37 +310,72 @@ def _compact_wave_payload(
         return compacted_payload, size_mb, notes
 
     preselection_rows = compacted_payload.get("preselection_results")
-    if not isinstance(preselection_rows, list) or not preselection_rows:
+    if isinstance(preselection_rows, list) and preselection_rows:
+        if preselection_limit >= 0:
+            ordered_rows = _sorted_preselection_rows(preselection_rows)
+            trimmed_rows = ordered_rows[:preselection_limit]
+            if len(trimmed_rows) < len(preselection_rows):
+                compacted_payload["preselection_results"] = trimmed_rows
+                size_mb = _payload_size_mb(compacted_payload)
+                notes.append(f"preselection trimmed {len(trimmed_rows)}/{len(preselection_rows)}")
+                preselection_rows = trimmed_rows
+                if size_mb <= max_payload_mb:
+                    return compacted_payload, size_mb, notes
+
+        lightweight_rows: list[Any] = []
+        for item in preselection_rows:
+            if isinstance(item, dict) and "recent_daily_data" in item:
+                lightweight = dict(item)
+                lightweight.pop("recent_daily_data", None)
+                lightweight_rows.append(lightweight)
+            else:
+                lightweight_rows.append(item)
+        compacted_payload["preselection_results"] = lightweight_rows
+        size_mb = _payload_size_mb(compacted_payload)
+        notes.append("preselection stripped recent_daily_data")
+        if size_mb <= max_payload_mb:
+            return compacted_payload, size_mb, notes
+
+        compacted_payload["preselection_results"] = []
+        size_mb = _payload_size_mb(compacted_payload)
+        notes.append("preselection dropped to empty list")
+    if size_mb <= max_payload_mb:
         return compacted_payload, size_mb, notes
 
-    if preselection_limit >= 0:
-        ordered_rows = _sorted_preselection_rows(preselection_rows)
-        trimmed_rows = ordered_rows[:preselection_limit]
-        if len(trimmed_rows) < len(preselection_rows):
-            compacted_payload["preselection_results"] = trimmed_rows
+    historical_rows = compacted_payload.get("historical_results")
+    if not isinstance(historical_rows, list) or not historical_rows:
+        return compacted_payload, size_mb, notes
+
+    if historical_limit >= 0:
+        ordered_rows = _sorted_historical_rows(historical_rows)
+        trimmed_rows = ordered_rows[:historical_limit]
+        if len(trimmed_rows) < len(historical_rows):
+            compacted_payload["historical_results"] = trimmed_rows
+            compacted_payload["historical_result_count"] = len(trimmed_rows)
             size_mb = _payload_size_mb(compacted_payload)
-            notes.append(f"preselection trimmed {len(trimmed_rows)}/{len(preselection_rows)}")
-            preselection_rows = trimmed_rows
+            notes.append(f"historical trimmed {len(trimmed_rows)}/{len(historical_rows)}")
+            historical_rows = trimmed_rows
             if size_mb <= max_payload_mb:
                 return compacted_payload, size_mb, notes
 
-    lightweight_rows: list[Any] = []
-    for item in preselection_rows:
+    lightweight_rows = []
+    for item in historical_rows:
         if isinstance(item, dict) and "recent_daily_data" in item:
             lightweight = dict(item)
             lightweight.pop("recent_daily_data", None)
             lightweight_rows.append(lightweight)
         else:
             lightweight_rows.append(item)
-    compacted_payload["preselection_results"] = lightweight_rows
+    compacted_payload["historical_results"] = lightweight_rows
     size_mb = _payload_size_mb(compacted_payload)
-    notes.append("preselection stripped recent_daily_data")
+    notes.append("historical stripped recent_daily_data")
     if size_mb <= max_payload_mb:
         return compacted_payload, size_mb, notes
 
-    compacted_payload["preselection_results"] = []
+    compacted_payload["historical_results"] = []
+    compacted_payload["historical_result_count"] = 0
     size_mb = _payload_size_mb(compacted_payload)
-    notes.append("preselection dropped to empty list")
+    notes.append("historical dropped to empty list")
     return compacted_payload, size_mb, notes
 
 
@@ -320,6 +389,7 @@ def main() -> int:
     parser.add_argument("--one-wave-json", default="./one_wave_entry_data/wave_selection_results.json", help="Path to one-wave entry structured json")
     parser.add_argument("--wave-max-payload-mb", type=float, default=float(os.getenv("WAVE_PUSH_MAX_PAYLOAD_MB", "45")))
     parser.add_argument("--preselection-push-limit", type=int, default=int(os.getenv("WAVE_PRESELECTION_PUSH_LIMIT", "600")))
+    parser.add_argument("--historical-push-limit", type=int, default=int(os.getenv("WAVE_HISTORICAL_PUSH_LIMIT", "500")))
     parser.add_argument("--token", default=os.getenv("STOCK_TRACKING_PUSH_TOKEN"))
     parser.add_argument("--timeout", type=int, default=20)
     args = parser.parse_args()
@@ -363,6 +433,7 @@ def main() -> int:
             wave_payload,
             max_payload_mb=args.wave_max_payload_mb,
             preselection_limit=args.preselection_push_limit,
+            historical_limit=args.historical_push_limit,
         )
         if wave_notes:
             print(f"[stock-tracking] wave payload compacted: {'; '.join(wave_notes)}")
@@ -388,6 +459,7 @@ def main() -> int:
             one_wave_payload,
             max_payload_mb=args.wave_max_payload_mb,
             preselection_limit=args.preselection_push_limit,
+            historical_limit=args.historical_push_limit,
         )
         if one_wave_notes:
             print(f"[stock-tracking] one-wave payload compacted: {'; '.join(one_wave_notes)}")

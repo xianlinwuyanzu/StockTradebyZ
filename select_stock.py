@@ -15,6 +15,17 @@ from reporting.selection_visualizer import render_selection_dashboard, render_se
 from strategies.scan_three_wave import _compute_kdj
 from features.bbd_signals import SIGNAL_COLUMNS, compute_bbd_signals
 
+MOZHUA_STRATEGY_NAME = "魔抓策略"
+MOZHUA_HISTORY_FILE_NAME = "mozhua_selection_history.json"
+MOZHUA_HISTORY_WINDOW_DAYS = 10
+_DAILY_OUTPUT_FIELDS = {
+    "daily_data_file",
+    "daily_data_rows",
+    "daily_data_start",
+    "daily_data_end",
+    "recent_daily_data",
+}
+
 # ---------- 日志 ----------
 logging.basicConfig(
     level=logging.INFO,
@@ -143,6 +154,137 @@ def _compute_rocket_signals(
     return pd.Series(signal_rows, index=full_history.index, dtype=object)
 
 
+def _available_trade_dates(
+    data: Dict[str, pd.DataFrame], through_date: pd.Timestamp
+) -> List[pd.Timestamp]:
+    dates: set[pd.Timestamp] = set()
+    for frame in data.values():
+        if frame is None or frame.empty or "date" not in frame:
+            continue
+        parsed_dates = pd.to_datetime(frame["date"], errors="coerce").dropna()
+        dates.update(pd.Timestamp(value).normalize() for value in parsed_dates if value <= through_date)
+    return sorted(dates)
+
+
+def _history_record(
+    code: str, detail: Dict[str, Any], selected_trade_date: pd.Timestamp
+) -> Dict[str, Any]:
+    record = {
+        key: value for key, value in detail.items() if key not in _DAILY_OUTPUT_FIELDS
+    }
+    record["code"] = code
+    record["selected_trade_date"] = selected_trade_date.date().isoformat()
+    return _json_safe_value(record)
+
+
+def _history_record_key(record: Dict[str, Any]) -> tuple[str, str] | None:
+    code = str(record.get("code") or "").strip().upper()
+    selected_date = str(
+        record.get("selected_trade_date")
+        or record.get("selection_date")
+        or record.get("as_of_date")
+        or ""
+    ).strip()
+    if not code or not selected_date:
+        return None
+    try:
+        selected_date = pd.Timestamp(selected_date).date().isoformat()
+    except (TypeError, ValueError):
+        return None
+    record["code"] = code
+    record["selected_trade_date"] = selected_date
+    return code, selected_date
+
+
+def _load_selection_history(history_path: Path) -> List[Dict[str, Any]]:
+    if not history_path.exists():
+        return []
+    try:
+        raw = json.loads(history_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw_records = raw.get("records", []) if isinstance(raw, dict) else raw
+    if not isinstance(raw_records, list):
+        return []
+    records: List[Dict[str, Any]] = []
+    for raw_record in raw_records:
+        if not isinstance(raw_record, dict):
+            continue
+        record = {
+            key: value
+            for key, value in raw_record.items()
+            if key not in _DAILY_OUTPUT_FIELDS
+        }
+        if _history_record_key(record) is not None:
+            records.append(record)
+    return records
+
+
+def _collect_selector_history(
+    selector: Any,
+    data: Dict[str, pd.DataFrame],
+    trade_date: pd.Timestamp,
+    history_window_days: int,
+) -> List[Dict[str, Any]]:
+    available_dates = _available_trade_dates(data, trade_date)
+    if not available_dates:
+        return []
+    scan_dates = available_dates[-(max(1, history_window_days) + 1):]
+    records: List[Dict[str, Any]] = []
+    for scan_date in scan_dates:
+        selector.select(scan_date, data)
+        result_details = getattr(selector, "result_details", {})
+        if not isinstance(result_details, dict):
+            continue
+        for code, detail in result_details.items():
+            if isinstance(detail, dict):
+                records.append(_history_record(code, detail, scan_date))
+    return records
+
+
+def _merge_selection_history(
+    existing_records: List[Dict[str, Any]],
+    seeded_records: List[Dict[str, Any]],
+    details: Dict[str, Dict[str, Any]],
+    current_trade_date: pd.Timestamp | None,
+    available_dates: List[pd.Timestamp],
+    history_window_days: int,
+) -> tuple[List[Dict[str, Any]], set[str]]:
+    records_by_key: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for record in [*existing_records, *seeded_records]:
+        key = _history_record_key(record)
+        if key is not None:
+            records_by_key[key] = record
+    if current_trade_date is not None:
+        for code, detail in details.items():
+            record = _history_record(code, detail, current_trade_date)
+            key = _history_record_key(record)
+            if key is not None:
+                records_by_key[key] = record
+
+    retained_dates = available_dates[-(max(1, history_window_days) + 1):]
+    retained_date_strings = {item.date().isoformat() for item in retained_dates}
+    retained_records = [
+        record
+        for record in records_by_key.values()
+        if str(record.get("selected_trade_date")) in retained_date_strings
+    ]
+    retained_records.sort(
+        key=lambda record: (
+            str(record.get("selected_trade_date") or ""),
+            str(record.get("code") or ""),
+        ),
+        reverse=True,
+    )
+    historical_dates = {
+        str(record["selected_trade_date"])
+        for record in retained_records
+        if current_trade_date is None
+        or str(record.get("selected_trade_date")) != current_trade_date.date().isoformat()
+    }
+    return retained_records, historical_dates
+
+
 def write_wave_selection_outputs(
     details: Dict[str, Dict[str, Any]],
     data: Dict[str, pd.DataFrame],
@@ -155,6 +297,8 @@ def write_wave_selection_outputs(
     preselection_details: Dict[str, List[Dict[str, Any]]] | None = None,
     daily_history_cache: Dict[str, pd.DataFrame] | None = None,
     signal_history_days: int | None = None,
+    history_window_days: int | None = None,
+    history_selector: Any | None = None,
 ) -> None:
     """写出评分及日线；缓存仅在相同运行内共享，信号窗口需覆盖所有输出天数。"""
     if signal_history_days is not None and signal_history_days < max(1, data_days):
@@ -168,6 +312,7 @@ def write_wave_selection_outputs(
         stale_file.unlink()
     result_items: List[Dict[str, Any]] = []
     preselection_items: List[Dict[str, Any]] = []
+    historical_items: List[Dict[str, Any]] = []
 
     daily_items: Dict[str, Dict[str, Any] | None] = {}
 
@@ -247,6 +392,61 @@ def write_wave_selection_outputs(
             if item is not None:
                 preselection_items.append(item)
 
+    history_dates: set[str] = set()
+    if strategy_name == MOZHUA_STRATEGY_NAME and history_window_days is not None:
+        history_path = output_dir / MOZHUA_HISTORY_FILE_NAME
+        available_dates = _available_trade_dates(data, trade_date)
+        current_trade_date = available_dates[-1] if available_dates else None
+        existing_history = _load_selection_history(history_path)
+        seeded_history: List[Dict[str, Any]] = []
+        if not history_path.exists() and history_selector is not None:
+            seeded_history = _collect_selector_history(
+                history_selector,
+                data,
+                trade_date,
+                history_window_days,
+            )
+        retained_history, history_dates = _merge_selection_history(
+            existing_history,
+            seeded_history,
+            details,
+            current_trade_date,
+            available_dates,
+            history_window_days,
+        )
+        for record in retained_history:
+            if current_trade_date is not None and (
+                str(record.get("selected_trade_date")) == current_trade_date.date().isoformat()
+            ):
+                continue
+            code = str(record.get("code") or "").strip().upper()
+            if not code:
+                continue
+            item = build_result_item(code, record)
+            if item is not None:
+                item["history_status"] = "historical_selection"
+                historical_items.append(item)
+        historical_items.sort(
+            key=lambda item: (
+                str(item.get("selected_trade_date") or ""),
+                numeric_detail_value(item, "timing_score"),
+                str(item.get("code") or ""),
+            ),
+            reverse=True,
+        )
+        history_payload = {
+            "strategy": strategy_name,
+            "history_window_days": history_window_days,
+            "updated_trade_date": (
+                current_trade_date.date().isoformat() if current_trade_date is not None else None
+            ),
+            "records": retained_history,
+        }
+        history_path.write_text(
+            json.dumps(_json_safe_value(history_payload), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
     payload = {
         "strategy": strategy_name,
         "trade_date": trade_date.date().isoformat(),
@@ -257,6 +457,13 @@ def write_wave_selection_outputs(
         "preselection_count": len(preselection_items),
         "preselection_results": preselection_items,
     }
+    if strategy_name == MOZHUA_STRATEGY_NAME and history_window_days is not None:
+        payload.update({
+            "history_window_days": history_window_days,
+            "historical_result_count": len(historical_items),
+            "historical_results": historical_items,
+            "historical_trade_dates": sorted(history_dates, reverse=True),
+        })
     if strategy_name == "二波选股策略":
         first_detail = next(iter(details.values()), {})
         raw_max = numeric_detail_value(first_detail, "structure_match_raw_max", 8.6)
@@ -287,6 +494,23 @@ def write_wave_selection_outputs(
         index=False,
         encoding="utf-8-sig",
     )
+    if strategy_name == MOZHUA_STRATEGY_NAME and history_window_days is not None:
+        historical_summary_rows = []
+        for item in historical_items:
+            summary = {
+                key: value
+                for key, value in item.items()
+                if key != "recent_daily_data"
+            }
+            for key, value in list(summary.items()):
+                if isinstance(value, (list, tuple, dict)):
+                    summary[key] = json.dumps(value, ensure_ascii=False)
+            historical_summary_rows.append(summary)
+        pd.DataFrame(historical_summary_rows).to_csv(
+            output_dir / "wave_selection_history.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
 
 
 # ---------- 主函数 ----------
@@ -359,6 +583,8 @@ def main():
             int,
             float,
             Dict[str, Any],
+            int | None,
+            Any | None,
         ]
     ] = []
     for cfg in selector_cfgs:
@@ -393,6 +619,10 @@ def main():
                     data_days,
                     score_threshold,
                     signal_selectors,
+                    MOZHUA_HISTORY_WINDOW_DAYS
+                    if selector.__class__.__name__ == "MoZhuaSelector"
+                    else None,
+                    selector if selector.__class__.__name__ == "MoZhuaSelector" else None,
                 )
             )
 
@@ -413,6 +643,8 @@ def main():
         data_days,
         score_threshold,
         output_signal_selectors,
+        history_window_days,
+        history_selector,
     ) in wave_output_specs:
         stage_started = perf_counter()
         write_wave_selection_outputs(
@@ -427,6 +659,8 @@ def main():
             preselection_details=preselection_details,
             daily_history_cache=daily_history_cache,
             signal_history_days=signal_history_days,
+            history_window_days=history_window_days,
+            history_selector=history_selector,
         )
         record_timing("wave_output", stage_started, strategy=alias, cached_symbols=len(daily_history_cache))
         logger.info(

@@ -192,7 +192,9 @@ weekly_j_reset
 
 `MoZhuaSelector` 是以二波结构为基础的独立策略，配置别名“魔抓策略”，默认 `activate=true`，输出 `selection_branch=mozhua_two_wave`。必须已经有两段合格上涨及第二顶部，只在第二顶后的3起参考阶段入选，不在第一顶后的2起阶段入选。普通一波、二波的缺口评分及 J<5/10/20 保持不变。魔抓允许与普通二波同时入选，不再执行“排除已有二波”。
 
-魔抓配置位于 `configs.json` 的独立条目，关闭该条目的 `activate` 即可停用，不影响一波。输出目录为 `mozhua_selection_data/`，包含 `wave_selection_results.json`、CSV 索引和 `daily/` 日线，主选股日志与策略交集仪表盘显示“魔抓策略”。独立的历史跟踪发布脚本仍保留既有输入参数，本次未扩展其报告。
+魔抓配置位于 `configs.json` 的独立条目，关闭该条目的 `activate` 即可停用，不影响一波。输出目录为 `mozhua_selection_data/`，包含 `wave_selection_results.json`、当前结果 CSV、`wave_selection_history.csv`、`mozhua_selection_history.json` 和 `daily/` 日线，主选股日志与策略交集仪表盘显示“魔抓策略”。
+
+魔抓结果分为两部分：`results` 只保留本次交易日仍存在 3 起参考点的候选；`historical_results` 保留最近 10 个前置交易日曾入选的记录，按“股票代码 + 选中交易日”去重。历史记录中的结构、参考点和评分字段保持当日选中时的快照，但 `recent_daily_data`、`daily_data_end` 及对应 `daily/<CODE>.csv` 会在每次选股运行时用最新行情重新生成。首次启用时会用可用行情回填最近 10 个前置交易日；状态文件只保存选择元数据，不保存过期日线。发布脚本会将 `historical_results`、`historical_result_count`、`history_window_days` 和 `historical_trade_dates` 一并发送到魔抓接口。
 
 - 第一上涨段单独决定2起 J 阈值；第二上涨段单独决定3起 J 阈值。无缺口 J<5，向上阳线实体缺口 J<40，完整缺口 J<50，连续强势推进 J<70；参数为 `mozhua_body_j_limit`、`mozhua_full_j_limit`、`mozhua_strong_j_limit`。这些是魔抓研究初始阈值，不是普通策略默认值。
 - 魔抓的方向性缺口要求当天阳线，且开盘高于前一根实体上沿 `max(open, close)`，前日允许阴线；完整缺口额外要求当天最低价高于前日最高价。普通策略的双阳线缺口统计与评分定义不改。两种统计同时输出，可审计其差别。
