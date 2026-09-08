@@ -39,6 +39,28 @@
 
 ## 项目简介
 
+## 与 mingzhishan 仓库分工（交易复盘）
+
+交易复盘按双仓边界执行，避免策略和前后端耦合：
+
+- sf 负责：复盘策略逻辑、量化指标计算、买点前20日/卖点后20日窗口提取、行情数据读取。
+- mingzhishan 负责：用户上传、鉴权与权限、API 对外协议、页面渲染与交互。
+
+sf 侧复盘引擎入口：
+
+```bash
+python -m reporting.trade_recap_engine --input payload.json --data-dir ./data/us_stocks
+```
+
+说明：
+
+- 复盘策略只消费标准化 round-trip 输入，不耦合 Web 框架。
+- 行情默认读取 sf 本地日更数据目录 `data/us_stocks`，不要求每次复盘都走外部行情源。
+- 对外只输出结构化 JSON，供 mingzhishan 后端/前端消费。
+- IB PDF 的标准化 `trades` 由 mingzhishan 提取；sf 在 `reporting/trade_matching.py` 按时间排序、FIFO 配对多空成交并按数量分摊费用。
+- `summary.count` 为已匹配片段数量，非逐股数量；未知期初成本与期末未平仓不计入已实现收益并发出告警。行情不覆盖成交日期时不生成误导性的点位。
+- 配对与行情边界回归：`python -m unittest reporting.test_trade_matching`。
+
 | 名称                    | 功能简介                                                                                                                                                                               |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`data_fetch/fetch_kline.py`**  | 仅使用 **Tushare** 抓取 **A 股日线（前复权 qfq）**。**股票池从 `stocklist.csv` 读取**，支持排除 **创业板/科创板/北交所**，并发抓取，**每次运行全量覆盖保存**（不做增量合并），输出 CSV 列：`date, open, close, high, low, volume`。 |

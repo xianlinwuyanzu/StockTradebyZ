@@ -15,10 +15,11 @@ import requests
 from zoneinfo import ZoneInfo
 
 _HEADER_RE = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ \[INFO\] =+ 选股结果 \[(?P<name>.+?)\] =+")
-_RUN_START_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+ \[INFO\] (?:选股运行开始|未指定 --date)")
+_RUN_START_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+ \[INFO\] 选股运行开始")
 _TRADE_DAY_RE = re.compile(r"^交易日:\s*(\d{4}-\d{2}-\d{2})$")
 _COUNT_RE = re.compile(r"^符合条件股票数:\s*(\d+)$")
 _INFO_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+ \[INFO\] (.*)$")
+_PICK_CODE_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,11}$")
 
 
 def _resolve_log_timezone() -> timezone | ZoneInfo:
@@ -53,6 +54,13 @@ def _parse_picks(text: str) -> list[str]:
     if not text or text == "无符合条件股票":
         return []
     return [item.strip().upper() for item in text.split(",") if item.strip()]
+
+
+def _is_pick_code_list_line(text: str) -> bool:
+    parsed = _parse_picks(text)
+    if not parsed:
+        return False
+    return all(_PICK_CODE_RE.fullmatch(item) for item in parsed)
 
 
 def parse_strategy_blocks(log_path: Path) -> list[StrategyBlock]:
@@ -111,10 +119,8 @@ def parse_strategy_blocks(log_path: Path) -> list[StrategyBlock]:
                 j += 1
                 continue
 
-            if "," in info_text or re.fullmatch(r"[A-Z0-9.\-]+", info_text):
-                parsed = _parse_picks(info_text)
-                if parsed:
-                    picks = parsed
+            if _is_pick_code_list_line(info_text):
+                picks = _parse_picks(info_text)
 
             j += 1
 
@@ -136,23 +142,64 @@ def parse_strategy_blocks(log_path: Path) -> list[StrategyBlock]:
 
 
 def latest_snapshot(blocks: list[StrategyBlock]) -> tuple[date | None, list[StrategyBlock], datetime]:
+    def dedup_latest(items: list[StrategyBlock]) -> list[StrategyBlock]:
+        dedup: dict[str, StrategyBlock] = {}
+        for item in items:
+            prev = dedup.get(item.name)
+            if prev is None or item.updated_at > prev.updated_at:
+                dedup[item.name] = item
+        return list(dedup.values())
+
+    def min_strategy_count() -> int:
+        raw = os.getenv("STOCK_TRACKING_MIN_STRATEGIES", "3").strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            return 3
+        return max(1, min(200, value))
+
+    def pinned_strategy_names() -> list[str]:
+        raw = os.getenv("STOCK_TRACKING_PINNED_STRATEGIES", "二波选股策略,一波入场策略,魔抓策略")
+        names = [item.strip() for item in raw.split(",") if item.strip()]
+        dedup: list[str] = []
+        for name in names:
+            if name not in dedup:
+                dedup.append(name)
+        return dedup
+
     latest_run_id = max(item.run_id for item in blocks)
     if latest_run_id > 0:
-        recent = [item for item in blocks if item.run_id == latest_run_id]
+        required_count = min_strategy_count()
+        selected: list[StrategyBlock] = []
+        for run_id in sorted({item.run_id for item in blocks if item.run_id > 0}, reverse=True):
+            candidate = dedup_latest([item for item in blocks if item.run_id == run_id])
+            if not candidate:
+                continue
+            if not selected:
+                selected = candidate
+            if len(candidate) >= required_count:
+                selected = candidate
+                break
     else:
         latest_ts = max(item.updated_at for item in blocks)
         cutoff = latest_ts - timedelta(minutes=40)
         recent = [item for item in blocks if item.updated_at >= cutoff]
         if not recent:
             recent = blocks
+        selected = dedup_latest(recent)
 
-    dedup: dict[str, StrategyBlock] = {}
-    for item in recent:
-        prev = dedup.get(item.name)
-        if prev is None or item.updated_at > prev.updated_at:
-            dedup[item.name] = item
+    sorted_blocks_desc = sorted(blocks, key=lambda item: item.updated_at, reverse=True)
+    selected_name_set = {item.name for item in selected}
+    for pinned_name in pinned_strategy_names():
+        if pinned_name in selected_name_set:
+            continue
+        fallback = next((item for item in sorted_blocks_desc if item.name == pinned_name), None)
+        if fallback is None:
+            continue
+        selected.append(fallback)
+        selected_name_set.add(fallback.name)
 
-    selected = sorted(dedup.values(), key=lambda item: (-item.pick_count, item.name))
+    selected = sorted(selected, key=lambda item: (-item.pick_count, item.name))
 
     trade_days = [item.trade_date for item in selected if item.trade_date is not None]
     if trade_days:
@@ -199,6 +246,15 @@ def _derive_one_wave_api_url(stock_api_url: str, explicit_one_wave_api_url: str)
     if marker in stock_api_url:
         return stock_api_url.replace(marker, "/stock-tracking/one-wave-entry/latest")
     return stock_api_url.rstrip("/") + "/one-wave-entry/latest"
+
+
+def _derive_mozhua_api_url(stock_api_url: str, explicit_mozhua_api_url: str) -> str:
+    if explicit_mozhua_api_url.strip():
+        return explicit_mozhua_api_url.strip()
+    marker = "/stock-tracking/latest"
+    if marker in stock_api_url:
+        return stock_api_url.replace(marker, "/stock-tracking/mozhua-selection/latest")
+    return stock_api_url.rstrip("/") + "/mozhua-selection/latest"
 
 
 def build_wave_payload(wave_json_path: Path, generated_at: datetime, fallback_trade_day: date | None) -> dict[str, Any] | None:
@@ -387,6 +443,8 @@ def main() -> int:
     parser.add_argument("--wave-json", default="./wave_selection_data/wave_selection_results.json", help="Path to wave selection structured json")
     parser.add_argument("--one-wave-api-url", default=os.getenv("ONE_WAVE_ENTRY_API_URL", ""))
     parser.add_argument("--one-wave-json", default="./one_wave_entry_data/wave_selection_results.json", help="Path to one-wave entry structured json")
+    parser.add_argument("--mozhua-api-url", default=os.getenv("MOZHUA_SELECTION_API_URL", ""))
+    parser.add_argument("--mozhua-json", default="./mozhua_selection_data/wave_selection_results.json", help="Path to mozhua structured json")
     parser.add_argument("--wave-max-payload-mb", type=float, default=float(os.getenv("WAVE_PUSH_MAX_PAYLOAD_MB", "45")))
     parser.add_argument("--preselection-push-limit", type=int, default=int(os.getenv("WAVE_PRESELECTION_PUSH_LIMIT", "600")))
     parser.add_argument("--historical-push-limit", type=int, default=int(os.getenv("WAVE_HISTORICAL_PUSH_LIMIT", "500")))
@@ -476,6 +534,32 @@ def main() -> int:
             print(f"[stock-tracking] published one-wave-entry {one_wave_payload.get('result_count', 0)} rows")
         except Exception as exc:
             print(f"[stock-tracking] one-wave-entry publish failed: {exc}")
+
+    mozhua_payload = build_wave_payload(Path(args.mozhua_json), generated_at, fallback_trade_day)
+    if mozhua_payload is None:
+        print(f"[stock-tracking] mozhua payload not found or invalid: {args.mozhua_json}")
+    else:
+        mozhua_payload, mozhua_payload_size_mb, mozhua_notes = _compact_wave_payload(
+            mozhua_payload,
+            max_payload_mb=args.wave_max_payload_mb,
+            preselection_limit=args.preselection_push_limit,
+            historical_limit=args.historical_push_limit,
+        )
+        if mozhua_notes:
+            print(f"[stock-tracking] mozhua payload compacted: {'; '.join(mozhua_notes)}")
+        print(f"[stock-tracking] mozhua payload size: {mozhua_payload_size_mb:.2f} MB")
+        mozhua_api_url = _derive_mozhua_api_url(args.api_url, args.mozhua_api_url)
+        try:
+            mozhua_response = requests.post(
+                mozhua_api_url,
+                json=mozhua_payload,
+                headers={"X-Stock-Tracking-Token": args.token.strip()},
+                timeout=args.timeout,
+            )
+            mozhua_response.raise_for_status()
+            print(f"[stock-tracking] published mozhua-selection {mozhua_payload.get('result_count', 0)} rows")
+        except Exception as exc:
+            print(f"[stock-tracking] mozhua-selection publish failed: {exc}")
 
     return 0
 
