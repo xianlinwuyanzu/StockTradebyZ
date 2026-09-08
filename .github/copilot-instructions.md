@@ -10,7 +10,7 @@ For this repository, follow these placement rules for research work:
 Production/runtime examples:
 - `select_stock.py`
 - `us_daily.sh`
-- `wave_structure.py`
-- `fetch_kline_*.py`
+- `strategies/wave_structure.py`
+- `data_fetch/fetch_kline_*.py`
 
 When uncertain whether a new file is research or production, default to `analysis/code/` and mention that assumption.

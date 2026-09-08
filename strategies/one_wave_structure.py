@@ -6,8 +6,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ma_launch import evaluate_ma_launch
-from scan_three_wave import (
+from features.ma_launch import evaluate_ma_launch
+from features.impulse_pullback import IMPULSE_DEFAULTS, ImpulsePullback, find_impulse_pullback
+from features.bullish_gap import BullishGap, GAP_DEFAULTS, gap_reference_limit, measure_bullish_gaps
+from strategies.scan_three_wave import (
     NARROW_DEFAULTS,
     PivotZone,
     _compute_j,
@@ -19,6 +21,9 @@ from scan_three_wave import (
 
 
 ONE_WAVE_DEFAULTS = {
+    **GAP_DEFAULTS,
+    **IMPULSE_DEFAULTS,
+    "selection_branch": "low_j_pullback",
     "min_wave_bars": 2,
     "max_wave_bars": 20,
     "min_up_return": 0.06,
@@ -95,6 +100,10 @@ class OneWaveCandidate:
     timing_doji_bonus: float
     timing_score_components: tuple[tuple[str, float], ...]
     timing_score_reasons: tuple[str, ...]
+    bullish_gap: BullishGap = BullishGap()
+    reference_j_limit: float = 5.0
+    selection_branch: str = "low_j_pullback"
+    impulse_pullback: ImpulsePullback | None = None
 
 
 def _cfg_with_defaults(cfg: dict[str, float | int] | None) -> dict[str, float | int]:
@@ -156,7 +165,11 @@ def _find_j2_reference(
 
     start_price = float(frame["close"].iloc[start1.start])
     top_price = float(top1.value)
-    reference_j_limit = float(cfg["max_reference_j"])
+    reference_j_limit = gap_reference_limit(
+        measure_bullish_gaps(frame, [(start1.start, top1.start)]),
+        float(cfg["max_reference_j"]),
+        cfg,
+    )
     for index in range(search_start, search_end + 1):
         if float(j_values.iloc[index]) >= reference_j_limit:
             continue
@@ -230,6 +243,8 @@ def _score_candidate(
     pullback_path_efficiency_low: float,
     pullback_path_efficiency_high: float,
     pullback_path_efficiency_penalty: float,
+    bullish_gap: BullishGap = BullishGap(),
+    bullish_gap_weight: float = 1.0,
 ) -> tuple[float, tuple[tuple[str, float], ...], tuple[str, ...]]:
     pullback_efficiency_penalty = -float(pullback_path_efficiency_penalty) * (
         1.0 - _range_score(
@@ -251,6 +266,7 @@ def _score_candidate(
         ("start_price_drawdown", start_price_drawdown_weight * _clip01(
             max(0.0, start_price_drawdown) / max(start_price_high_drawdown_scale, 1e-9)
         )),
+        ("bullish_gap", bullish_gap_weight * bullish_gap.quality),
     )
     score = round(sum(value for _, value in components), 4)
     reference_label = f"J<{j2_reference_limit:g}"
@@ -265,6 +281,7 @@ def _score_candidate(
         f"信号新鲜度 +{components[7][1]:.2f}分（观察期剩余比例 {freshness * 100:.1f}%）",
         f"下降路径效率 {components[8][1]:+.2f}分（效率 {pullback_path_efficiency:.3f}，仅评分不淘汰）",
         f"1起前高回落 +{components[9][1]:.2f}分（相对起点前最高收盘回落 {start_price_drawdown * 100:.2f}%）",
+        f"阳线缺口 +{components[10][1]:.2f}分（实体 {bullish_gap.body_count} 组，其中完整 {bullish_gap.full_count} 组，连续衔接 {bullish_gap.consecutive_count} 次）",
     )
     return score, components, reasons
 
@@ -340,9 +357,10 @@ def _build_candidate(
     j2_reference_index: int,
     cfg: dict[str, float | int],
     enforce_exit_rules: bool = True,
+    impulse_pullback: ImpulsePullback | None = None,
 ) -> OneWaveCandidate | None:
     latest_index = len(frame) - 1
-    if latest_index <= j2_reference_index:
+    if latest_index < j2_reference_index or (latest_index == j2_reference_index and impulse_pullback is None):
         return None
     current_period = latest_index - start1.start
     if enforce_exit_rules:
@@ -361,6 +379,13 @@ def _build_candidate(
     latest_close = float(frame["close"].iloc[latest_index])
     close_after_top = frame["close"].iloc[top1.end : latest_index + 1].astype(float)
     lowest_close = float(close_after_top.min())
+    if enforce_exit_rules and impulse_pullback is not None:
+        impulse_price = float(frame["close"].iloc[impulse_pullback.impulse_start])
+        if (
+            1.0 - lowest_close / top_price > float(cfg["impulse_pullback_max_pct"])
+            or (top_price - lowest_close) / (top_price - impulse_price) > float(cfg["impulse_max_retracement"])
+        ):
+            return None
     support_gap = lowest_close / start_price - 1.0 if start_price > 0 else -1.0
     if enforce_exit_rules and support_gap < -float(cfg["support_close_tolerance"]):
         return None
@@ -429,13 +454,17 @@ def _build_candidate(
         int(cfg["max_observation_after_reference"]), 1
     )
     smoothness = _segment_smoothness(frame, start1.start, top1.start)
+    bullish_gap = measure_bullish_gaps(frame, [(start1.start, top1.start)])
+    reference_j_limit = gap_reference_limit(bullish_gap, float(cfg["max_reference_j"]), cfg)
+    if impulse_pullback is not None:
+        reference_j_limit = float(cfg["impulse_reference_j_limit"])
     score, components, reasons = _score_candidate(
         wave1_return=wave1_return,
         wave1_path_efficiency=wave1_efficiency,
         wave1_smoothness=smoothness,
         support_gap=support_gap,
         j2_value=float(j_values.iloc[j2_reference_index]),
-        j2_reference_limit=float(cfg["max_reference_j"]),
+        j2_reference_limit=reference_j_limit,
         rebound_return=rebound_return,
         freshness=freshness,
         start_price_drawdown=start_price_drawdown,
@@ -446,7 +475,17 @@ def _build_candidate(
         pullback_path_efficiency_low=float(cfg["pullback_path_efficiency_low"]),
         pullback_path_efficiency_high=float(cfg["pullback_path_efficiency_high"]),
         pullback_path_efficiency_penalty=float(cfg["pullback_path_efficiency_penalty"]),
+        bullish_gap=bullish_gap,
+        bullish_gap_weight=float(cfg["bullish_gap_weight"]),
     )
+    if impulse_pullback is not None:
+        impulse_bonus = max(0.0, float(cfg["impulse_quality_weight"])) * impulse_pullback.quality
+        components += (("impulse_quality", impulse_bonus),)
+        reasons += (
+            f"强势推进 +{impulse_bonus:.2f}分（涨幅 {impulse_pullback.impulse_return * 100:.2f}%，效率 {impulse_pullback.impulse_efficiency:.3f}，全阳线推进）",
+            f"强势快回调分支：J<{reference_j_limit:g}，顶部 J 回落 {impulse_pullback.j_drop:.2f}，回吐推进幅度 {impulse_pullback.retracement * 100:.2f}%",
+        )
+        score = round(sum(value for _, value in components), 4)
     timing_context = _timing_score_after_reference(
         frame,
         j_values,
@@ -454,6 +493,8 @@ def _build_candidate(
         cfg,
     )
     state = "一波回调后回升" if rebound_return > 0.0 else "一波有效（2起参考）"
+    if impulse_pullback is not None:
+        state = "一波强势快回调（2起候选）"
     return OneWaveCandidate(
         code=str(frame["code"].iloc[0]),
         start1=start1,
@@ -493,6 +534,10 @@ def _build_candidate(
         timing_doji_bonus=float(timing_context["doji_bonus"]),
         timing_score_components=timing_context["components"],
         timing_score_reasons=timing_context["reasons"],
+        bullish_gap=bullish_gap,
+        reference_j_limit=reference_j_limit,
+        selection_branch="impulse_pullback" if impulse_pullback is not None else "low_j_pullback",
+        impulse_pullback=impulse_pullback,
     )
 
 
@@ -543,21 +588,30 @@ def _find_one_wave_candidates(
         top1 = pivots[index + 1]
         if start1.kind != "L" or top1.kind != "H":
             continue
-        reference_index = _find_j2_reference(work, j_values, start1, top1, config)
-        if reference_index is None:
-            continue
-        candidate = _build_candidate(
-            work,
-            pivots,
-            start1,
-            top1,
-            j_values,
-            reference_index,
-            config,
-            enforce_exit_rules=enforce_exit_rules,
+        branch = config["selection_branch"]
+        reference_index = (
+            _find_j2_reference(work, j_values, start1, top1, config)
+            if branch == "low_j_pullback" else None
         )
-        if candidate is not None:
-            candidates.append(candidate)
+        impulse = (
+            find_impulse_pullback(
+                work, j_values, start1.start, top1.start, top1.end, top1.value, config,
+            )
+            if branch == "impulse_pullback" else None
+        )
+        references = []
+        if reference_index is not None:
+            references.append((reference_index, None))
+        if impulse is not None:
+            references.append((impulse.reference_index, impulse))
+        for selected_index, branch_context in references:
+            candidate = _build_candidate(
+                work, pivots, start1, top1, j_values, selected_index, config,
+                enforce_exit_rules=enforce_exit_rules,
+                impulse_pullback=branch_context,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
 
     return candidates
 
@@ -593,6 +647,7 @@ def one_wave_to_dict(
         "completed_wave_count": 0,
         "wave_count_in_sequence": 1,
         "state": candidate.state,
+        "selection_branch": candidate.selection_branch,
         "score": candidate.score,
         "score_threshold": score_threshold,
         "score_components": {name: round(value, 4) for name, value in candidate.score_components},
@@ -634,6 +689,8 @@ def one_wave_to_dict(
         "pullback_from_top1": candidate.pullback_from_top1,
         "j2_reference_date": date_at(candidate.j2_reference_index),
         "j2_reference_value": candidate.j2_reference_value,
+        "reference_j_limit": candidate.reference_j_limit,
+        "bullish_gap": candidate.bullish_gap.to_dict(),
         "j2_lowest_date": date_at(candidate.j2_lowest_index),
         "j2_lowest_value": candidate.j2_lowest_value,
         "lowest_close_after_top1": candidate.lowest_close_after_top1,
@@ -641,5 +698,20 @@ def one_wave_to_dict(
         "max_observation_after_reference": candidate.current_period,
         "latest_close": float(frame["close"].iloc[-1]),
     }
+    impulse = candidate.impulse_pullback
+    if impulse is not None:
+        result["impulse_pullback"] = {
+            "start_date": date_at(impulse.impulse_start),
+            "top_date": date_at(impulse.impulse_end),
+            "return": impulse.impulse_return,
+            "efficiency": impulse.impulse_efficiency,
+            "quality": impulse.quality,
+            "first_candidate_date": date_at(impulse.first_reference_index),
+            "reference_date": date_at(impulse.reference_index),
+            "reference_status": "candidate",
+            "pullback": impulse.pullback,
+            "retracement": impulse.retracement,
+            "j_drop": impulse.j_drop,
+        }
     result.update(evaluate_ma_launch(frame, candidate.start1.start))
     return result

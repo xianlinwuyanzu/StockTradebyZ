@@ -181,6 +181,9 @@
         "top_plateau_after_wave": 3,
         "min_path_efficiency": 0.58,
         "up_path_efficiency_weight": 1.5,
+        "bullish_gap_weight": 1.0,
+        "body_gap_reference_j_limit": 10.0,
+        "full_gap_reference_j_limit": 20.0,
         "up_direction_consistency_weight": 1.5,
         "pullback_path_efficiency_weight": 0.6,
         "timing_min_top_to_reference_bars": 2,
@@ -215,6 +218,9 @@
         "min_up_return": 0.06,
         "min_path_efficiency": 0.58,
         "path_efficiency_weight": 2.0,
+        "bullish_gap_weight": 1.0,
+        "body_gap_reference_j_limit": 10.0,
+        "full_gap_reference_j_limit": 20.0,
         "max_up_adverse": 0.12,
         "max_one_wave_period": 30,
         "start_price_lookback": 120,
@@ -238,6 +244,22 @@
         "support_close_tolerance": 0.0,
         "exclude_existing_two_wave": true,
         "existing_two_wave_score_threshold": 1.0
+      }
+    },
+    {
+      "class": "MoZhuaSelector",
+      "alias": "魔抓策略",
+      "activate": true,
+      "params": {
+        "score_threshold": 1.0,
+        "data_days": 70,
+        "output_dir": "./mozhua_selection_data",
+        "bullish_gap_weight": 1.0,
+        "impulse_quality_weight": 1.0,
+        "mozhua_body_j_limit": 40.0,
+        "mozhua_full_j_limit": 50.0,
+        "mozhua_strong_j_limit": 70.0,
+        "mozhua_min_j_drop": 30.0
       }
     }
   ]

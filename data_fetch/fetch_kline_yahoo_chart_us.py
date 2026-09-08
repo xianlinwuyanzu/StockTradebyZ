@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 import requests
-from safe_io import is_safe_ticker, ticker_csv_path, write_dataframe_csv
+from utils.safe_io import is_safe_ticker, ticker_csv_path, write_dataframe_csv
 
 PROFILE_FALLBACK = "Unknown"
 DEFAULT_STOCKLIST = Path("./data/tools/stocklist_sp400_20260902.csv")

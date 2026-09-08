@@ -6,8 +6,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ma_launch import evaluate_ma_launch
-from scan_three_wave import (
+from features.ma_launch import evaluate_ma_launch
+from features.bullish_gap import BullishGap, GAP_DEFAULTS, gap_reference_limit, measure_bullish_gaps
+from strategies.scan_three_wave import (
     NARROW_DEFAULTS,
     PivotZone,
     _compute_j,
@@ -90,10 +91,13 @@ class ActiveWave:
     timing_doji_bonus: float
     timing_score_components: tuple[tuple[str, float], ...]
     timing_score_reasons: tuple[str, ...]
+    bullish_gap: BullishGap = BullishGap()
+    reference_j_limit: float = 5.0
 
 
 def _cfg_with_defaults(cfg: dict[str, float | int] | None) -> dict[str, float | int]:
     merged = dict(NARROW_DEFAULTS)
+    merged.update(GAP_DEFAULTS)
     if cfg:
         merged.update(cfg)
     return merged
@@ -544,7 +548,11 @@ def _find_timing_reference(
 
     start_price = float(frame["close"].iloc[start.start])
     top_price = float(top.value)
-    reference_j_limit = float(cfg["timing_reference_j_limit"])
+    reference_j_limit = gap_reference_limit(
+        measure_bullish_gaps(frame, [(start.start, top.start)]),
+        float(cfg["timing_reference_j_limit"]),
+        cfg,
+    )
     support_tolerance = float(cfg["timing_reference_support_tolerance"])
     for index in range(search_start, search_end + 1):
         if float(j_values.iloc[index]) >= reference_j_limit:
@@ -612,7 +620,11 @@ def _timing_score_context(
     reference_index = _find_timing_reference(frame, j_values, start, top, cfg)
     j_segment = j_values.iloc[top.end : latest_index + 1].astype(float)
     j_peak = float(j_segment.max()) if not j_segment.empty else current_j
-    target_j = float(cfg["timing_reference_j_limit"])
+    target_j = gap_reference_limit(
+        measure_bullish_gaps(frame, [(start.start, top.start)]),
+        float(cfg["timing_reference_j_limit"]),
+        cfg,
+    )
     base_score = 0.0
     j_lowest = None
     j_rebound = 0.0
@@ -638,7 +650,7 @@ def _timing_score_context(
         elapsed = latest_index - start.start
         max_period = int(cfg["timing_max_reference_period"])
         if elapsed < int(cfg["timing_min_reference_period"]) or elapsed > max_period:
-            reasons.append("尚未在一波策略参考窗口内形成 J<5 的 2起参考点")
+            reasons.append(f"尚未在参考窗口内形成 J<{target_j:g} 的回落参考点")
         else:
             j_span = max(j_peak - target_j, 1.0)
             drop_progress = _clip01((j_peak - current_j) / j_span)
@@ -680,6 +692,7 @@ def _structure_raw_max(cfg: dict[str, float | int]) -> float:
             float(cfg["up_path_efficiency_weight"]),
             float(cfg["up_direction_consistency_weight"]),
             float(cfg["pullback_path_efficiency_weight"]),
+            float(cfg.get("bullish_gap_weight", 1.0)),
             1.0,
             1.0,
             1.0,
@@ -697,6 +710,7 @@ def _score_active_wave(
     start_price_quality: float,
     weekly_j_reset_score: float,
     cfg: dict[str, float | int],
+    bullish_gap: BullishGap = BullishGap(),
 ) -> tuple[float, tuple[tuple[str, float], ...], tuple[str, ...]]:
     raw_components = (
         ("structure_base", 1.0),
@@ -716,6 +730,7 @@ def _score_active_wave(
         ("low_position", start_price_low_score),
         ("start_price_quality", start_price_quality),
         ("weekly_j_reset", weekly_j_reset_score),
+        ("bullish_gap", float(cfg.get("bullish_gap_weight", 1.0)) * bullish_gap.quality),
     )
     anchor_raw = float(cfg.get("score_anchor_raw", 5.114))
     reference_points = float(cfg.get("score_reference_points", 10.0))
@@ -736,6 +751,7 @@ def _score_active_wave(
         f"1起低位程度 +{components[5][1]:.3f}分（原始 {start_price_low_score:.3f}；1起价格在起点前区间的位置）",
         f"1起前高回落 +{components[6][1]:.3f}分（原始 {start_price_quality:.3f}；从起点前高位回落的幅度）",
         f"周线 J 重置 +{components[7][1]:.3f}分（原始 {weekly_j_reset_score:.3f}；优先奖励高位 J 回落至 {float(cfg['weekly_j_low_threshold']):.0f} 以下）",
+        f"阳线缺口 +{components[8][1]:.3f}分（实体 {bullish_gap.body_count} 组，其中完整 {bullish_gap.full_count} 组，连续衔接 {bullish_gap.consecutive_count} 次）",
     )
     return score, components, reasons
 
@@ -870,6 +886,18 @@ def _build_active_candidate(
         j_values,
         cfg,
     )
+    gap_segments = [
+        (start.start, top.start)
+        for start, top in zip(starts, tops)
+        if start.start != current_start.start
+    ]
+    gap_segments.append((current_start.start, peak_index))
+    bullish_gap = measure_bullish_gaps(frame, gap_segments)
+    reference_j_limit = gap_reference_limit(
+        measure_bullish_gaps(frame, [(starts[-1].start, tops[-1].start)]),
+        float(cfg["timing_reference_j_limit"]),
+        cfg,
+    )
     score, score_components, reasons = _score_active_wave(
         lower_low_quality=lower_low_quality,
         up_path_efficiency_quality=up_path_efficiency_quality,
@@ -878,6 +906,7 @@ def _build_active_candidate(
         start_price_low_score=float(start_context["low_score"]),
         start_price_quality=float(start_context["quality"]),
         weekly_j_reset_score=float(weekly_context["score"]),
+        bullish_gap=bullish_gap,
         cfg=cfg,
     )
     score_anchor_raw = float(cfg.get("score_anchor_raw", 5.114))
@@ -965,6 +994,8 @@ def _build_active_candidate(
         timing_score=float(timing_context["score"]),
         timing_reference_index=timing_context["reference_index"],
         timing_reference_value=timing_context["reference_value"],
+        bullish_gap=bullish_gap,
+        reference_j_limit=reference_j_limit,
         timing_j_peak=timing_context["j_peak"],
         timing_j_lowest=timing_context["j_lowest"],
         timing_j_rebound=float(timing_context["j_rebound"]),
@@ -1124,6 +1155,8 @@ def active_wave_to_dict(candidate: ActiveWave, frame: pd.DataFrame, score_thresh
         "current_drawdown": candidate.current_drawdown,
         "current_path_efficiency": candidate.current_path_efficiency,
         "current_up_path_efficiency": candidate.current_up_path_efficiency,
+        "bullish_gap": candidate.bullish_gap.to_dict(),
+        "reference_j_limit": candidate.reference_j_limit,
         "current_up_adverse": candidate.current_up_adverse,
         "lower_low_quality": candidate.lower_low_quality,
         "lower_low_break_pct": candidate.lower_low_break_pct,

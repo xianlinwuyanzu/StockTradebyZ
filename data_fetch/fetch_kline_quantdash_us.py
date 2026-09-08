@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from quantdash import QuantDash
 from tqdm import tqdm
-from safe_io import is_safe_ticker, ticker_csv_path, write_dataframe_csv
+from utils.safe_io import is_safe_ticker, ticker_csv_path, write_dataframe_csv
 
 PROFILE_FALLBACK = "Unknown"
 
@@ -117,25 +117,24 @@ def _try_parse_trade_date(value: object) -> Optional[date]:
     return dt.date()
 
 
-def _get_local_latest_trade_date(csv_path: Path) -> Optional[date]:
+def _get_local_history_status(csv_path: Path) -> Tuple[Optional[date], int]:
     if not csv_path.exists():
-        return None
+        return None, 0
     try:
         df = pd.read_csv(csv_path, usecols=["date"])
     except Exception:
-        return None
+        return None, 0
     if df.empty:
-        return None
-    return _try_parse_trade_date(df["date"].iloc[-1])
+        return None, 0
+    return _try_parse_trade_date(df["date"].iloc[-1]), len(df)
+
+
+def _get_local_latest_trade_date(csv_path: Path) -> Optional[date]:
+    return _get_local_history_status(csv_path)[0]
 
 
 def _get_local_row_count(csv_path: Path) -> int:
-    if not csv_path.exists():
-        return 0
-    try:
-        return int(pd.read_csv(csv_path, usecols=["date"]).shape[0])
-    except Exception:
-        return 0
+    return _get_local_history_status(csv_path)[1]
 
 
 def _get_benchmark_latest_trade_date(qd: QuantDash, symbol: str, period: str) -> Optional[date]:
@@ -196,9 +195,9 @@ def _filter_up_to_date_symbols(
     for qsym in symbols:
         ticker = qd_symbol_to_ticker[qsym]
         csv_path = ticker_csv_path(out_dir, ticker)
-        local_latest = _get_local_latest_trade_date(csv_path)
+        local_latest, local_rows = _get_local_history_status(csv_path)
         if local_latest is not None and local_latest >= target_trade_date:
-            if minimum_rows > 0 and _get_local_row_count(csv_path) < minimum_rows:
+            if minimum_rows > 0 and local_rows < minimum_rows:
                 remaining.append(qsym)
                 continue
             skipped += 1

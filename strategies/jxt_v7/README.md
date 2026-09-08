@@ -20,7 +20,7 @@ Each run writes to `jxt_v7/output/YYYYMMDD/`:
 ## Run Once
 
 ```bash
-python jxt_v7/run_jxt_v7.py --ticker SPY
+python run_jxt_v7.py --ticker SPY
 ```
 
 ## Premarket Script
@@ -32,7 +32,7 @@ bash us_premarket_jxt.sh
 ## Step-by-step Robustness Tests
 
 ```bash
-python jxt_v7/run_jxt_v7.py --ticker SPY --run-tests --verbose
+python run_jxt_v7.py --ticker SPY --run-tests --verbose
 ```
 
 Test steps include:

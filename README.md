@@ -19,7 +19,7 @@
 * [云端部署（仅上传代码）](#云端部署仅上传代码)
 * [参数说明](#参数说明)
 
-  * [`fetch_kline.py`](#fetch_klinepy)
+  * [数据下载参数](#数据下载参数)
   * [`select_stock.py`](#select_stockpy)
 * [统一当日过滤 & 知行约束](#统一当日过滤--知行约束)
 * [内置策略（Selector）](#内置策略selector)
@@ -41,9 +41,9 @@
 
 | 名称                    | 功能简介                                                                                                                                                                               |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`fetch_kline.py`**  | 仅使用 **Tushare** 抓取 **A 股日线（前复权 qfq）**。**股票池从 `stocklist.csv` 读取**，支持排除 **创业板/科创板/北交所**，并发抓取，**每次运行全量覆盖保存**（不做增量合并），输出 CSV 列：`date, open, close, high, low, volume`。 |
+| **`data_fetch/fetch_kline.py`**  | 仅使用 **Tushare** 抓取 **A 股日线（前复权 qfq）**。**股票池从 `stocklist.csv` 读取**，支持排除 **创业板/科创板/北交所**，并发抓取，**每次运行全量覆盖保存**（不做增量合并），输出 CSV 列：`date, open, close, high, low, volume`。 |
 | **`select_stock.py`** | 加载 `./data` 目录内 CSV 行情与 `configs.json`，批量执行选择器（Selector）并输出结果到控制台与 `select_results.log`。                                                                                           |
-| **`Selector.py`**     | 实现各类战法（选择器）。**已删除 TePu 战法**；现包含 5 个策略，统一纳入“当日过滤 & 知行约束”。                                                                                                                           |
+| **`strategies/Selector.py`**     | 实现各类战法（选择器），由根目录选股入口动态加载；配置中的类名保持不变。 |
 
 ---
 
@@ -80,7 +80,7 @@ export TUSHARE_TOKEN=你的token
 ### 下载历史 K 线（qfq，日线）
 
 ```bash
-  python fetch_kline.py 
+python -m data_fetch.fetch_kline
 ```
 
 * **数据源固定**：Tushare 日线，**前复权 qfq**。
@@ -107,7 +107,7 @@ wave_selection_data/daily/<CODE>.csv
 
 其中每个入选股票的 `daily/<CODE>.csv` 保存最近 `70` 个交易日日线，并包含 `K`、`D`、`J` 三个 KDJ 指标字段；JSON 还内嵌同一份日线数据，前端可以选择读取索引文件或直接读取单票 CSV。
 
-二波选股策略的 `structure_quality` 在页面显示为“模型匹配度”，只评价结构本身，不评价当前处于第几波；旧字段 `score` 继续保留作为兼容字段，数值与 `structure_quality` 相同。接口另写出 `score_raw`、`structure_match_raw_max` 和 `structure_match_percent`：百分比按 `score_raw / structure_match_raw_max × 100` 计算，当前理论原始满分为 `8.6`，并限制在 `0%` 至 `100%`。它是固定模型口径，不按当日候选集合动态归一化，也不表示收益概率、收益率或胜率。一波仍使用原有评分口径。二波模型匹配度门槛内部仍默认为 `1.0`，报告同时提供对应的 `structure_match_threshold_percent`，页面按百分比显示；基础结构分为 `1.0`，其余分项根据实际数据在区间内连续变化；每条结果同时写出 `score_components` 和 `score_reasons`，便于前端和人工复核。
+二波选股策略的 `structure_quality` 在页面显示为“模型匹配度”，只评价结构本身，不评价当前处于第几波；旧字段 `score` 继续保留作为兼容字段，数值与 `structure_quality` 相同。接口另写出 `score_raw`、`structure_match_raw_max` 和 `structure_match_percent`：百分比按 `score_raw / structure_match_raw_max × 100` 计算，当前理论原始满分为 `9.6`（含最高 1.0 分阳线缺口项），并限制在 `0%` 至 `100%`。它是固定模型口径，不按当日候选集合动态归一化，也不表示收益概率、收益率或胜率。一波仍使用原有评分口径。二波模型匹配度门槛内部仍默认为 `1.0`，报告同时提供对应的 `structure_match_threshold_percent`，页面按百分比显示；基础结构分为 `1.0`，其余分项根据实际数据在区间内连续变化；每条结果同时写出 `score_components` 和 `score_reasons`，便于前端和人工复核。
 
 | 评分分项 | 最高分 | 计算依据 |
 | --- | ---: | --- |
@@ -119,10 +119,11 @@ wave_selection_data/daily/<CODE>.csv
 | `low_position` | 1.00 | `1起` 在起点前 120 个交易日价格区间中的相对低位，越靠近区间低点越高 |
 | `start_price_quality` | 1.00 | `1起` 相对起点前高点的回落幅度，默认按回落 40% 达到满分 |
 | `weekly_j_reset` | 1.00 | `1起` 前最近完整周的 J；优先奖励周线 J 曾高于 60 后回落到 10 以下 |
+| `bullish_gap` | 1.00 | 上涨段阳线实体缺口、完整缺口及连续缺口，按下文公式封顶加分 |
 
-`structure_base` 仍为固定的 `1.0`，表示结构硬条件通过，但它不携带当前波浪位置信息。上表分项是原始分，原始总分理论上最高约 `8.6`；展示用 `structure_quality` 仍按 AJG 手工样例的无破低结构原始分 `5.114` 映射为 `10.0` 分，因此优秀结构可能超过 `10`。`current_wave_number`、已完成波数量、当前周期长度和最新日 J 不再给分，只作为结果说明或其他结构指标的输入。该分数在页面显示为模型匹配度，不是收益率、胜率或收益概率。
+`structure_base` 仍为固定的 `1.0`，表示结构硬条件通过，但它不携带当前波浪位置信息。上表分项是原始分，原始总分理论上最高约 `9.6`；展示用 `structure_quality` 仍保留历史标尺 `5.114` 映射为 `10.0` 分，不因新增缺口项重新校准，因此优秀结构可能超过 `10`。`current_wave_number`、已完成波数量、当前周期长度和最新日 J 不再直接给分，只作为结果说明或其他结构指标的输入。该分数在页面显示为模型匹配度，不是收益率、胜率或收益概率。
 
-当前择时机会单独使用 `timing_score` 表示，页面显示为“择时”，范围通常为 `0` 至 `13`。二波只在最新价格已经从当前 `2顶` 回落后计算：先沿回落区间寻找满足 `J < 5` 的 `2起` 参考点；参考点形成前，J 从顶部高点向 `5` 回落得越充分，择时越高，形成参考点后，以参考点之后的最低 J 为基准，当前 J 回升越多，择时越低。一波沿用已经通过硬条件确认的 `J < 5` 的 `2起` 参考点，直接计算参考点之后的最低 J 与当前 J 的回升量，当前 J 越低且回升越少，择时越高。两种策略在当前 J 不高于 `10` 且当日实体占振幅不超过 `20%` 时，均可获得 `3` 分低 J 十字星加分。择时是当前阶段的技术状态分，不代表收益概率或确定买点，也不参与一波或二波结构硬筛选。
+当前择时机会单独使用 `timing_score` 表示，页面显示为“择时”，范围通常为 `0` 至 `13`。二波只在最新价格已经从当前 `2顶` 回落后计算：先沿回落区间寻找满足动态 J 阈值（默认 5，有实体缺口为 10，有完整缺口为 20）的参考点；参考点形成前，J 向该阈值回落得越充分，择时越高，形成参考点后，以参考点之后的最低 J 为基准，当前 J 回升越多，择时越低。一波沿用已经通过硬条件确认的 `2起` 参考点，直接计算参考点之后的最低 J 与当前 J 的回升量，当前 J 越低且回升越少，择时越高。两种策略在当前 J 不高于 `10` 且当日实体占振幅不超过 `20%` 时，均可获得 `3` 分低 J 十字星加分。择时是当前阶段的技术状态分，不代表收益概率或确定买点；择时分本身不参与结构硬筛选，但一波参考点是否存在仍是硬条件。
 
 二波结果按 `timing_score`（择时）从高到低排序，再按 `structure_quality`（模型匹配度）从高到低排序；一波入场策略页面也将结构评分显示为模型匹配度。
 
@@ -167,11 +168,11 @@ weekly_j_reset
 
 周线 J 使用 `W-FRI` 聚合的完整周线，取 `1起` 之前最近一根已完成周线，向前看最多 26 周；`周线 J <= 10` 且此前峰值 `>= 60` 时记录为 `weekly_j_reset=true`。这个条件目前是软评分项，不是硬过滤。
 
-一波入场策略要求第一上涨段通过涨幅、周期、路径效率和上涨不利波动等硬条件，随后在规定观察窗口内出现严格的 `J < 5` 参考点；最新收盘不能跌破 `1起`，回撤不能超过 `28%`，并且不能已经形成有效二波。通过硬条件后，`score_threshold` 默认仍为 `1.0`，评分只用于候选排序，不代表收益概率：
+一波入场策略要求第一上涨段通过涨幅、周期、路径效率和上涨不利波动等硬条件，随后在规定观察窗口内出现满足动态 J 阈值的参考点（无缺口仍为严格 `J < 5`）；最新收盘不能跌破 `1起`，回撤不能超过 `28%`，并且不能已经形成有效二波。通过硬条件后，`score_threshold` 默认仍为 `1.0`，评分只用于候选排序，不代表收益概率：
 
 | 评分分项 | 最高分 | 计算依据 |
 | --- | ---: | --- |
-| `structure_base` | 2.00 | 1起、1顶、`J < 5` 参考点及其他硬条件均通过 |
+| `structure_base` | 2.00 | 1起、1顶、动态 J 阈值参考点及其他硬条件均通过 |
 | `wave1_return` | 1.50 | 第一波涨幅从 6% 到 40% 线性计分 |
 | `wave1_path_efficiency` | 2.00 | 第一波路径效率从 0.58 到 1.00 线性计分 |
 | `wave1_smoothness` | 1.00 | 上涨方向一致性和日波动规整度 |
@@ -179,10 +180,47 @@ weekly_j_reset
 | `j2_oversold` | 1.50 | 参考 J 为负时按负值深度计分，J <= -30 达到满分；仅满足 `J < 5` 不会自动获得该项加分 |
 | `rebound` | 1.00 | 参考点后回升幅度从 0% 到 12% 线性计分 |
 | `signal_freshness` | 1.00 | 参考点后剩余观察期比例 |
+| `start_price_drawdown` | 1.50 | 1起相对前高回落程度，默认回落 40% 达到满分 |
+| `pullback_path_efficiency` | 0.00 | 回撤效率不足时最多扣 5 分 |
+| `bullish_gap` | 1.00 | 第一上涨段内的阳线缺口，按下文公式封顶加分 |
 
-一波结构评分理论最高为 `13.0` 分。硬条件决定是否入选，评分决定同一批候选的先后顺序；其中 `J < 5` 是准入条件，而 `j2_oversold` 是独立的软加分项。
+一波结构评分理论最高为 `14.0` 分。硬条件决定是否入选，评分决定同一批候选的先后顺序；其中动态 J 阈值用于一波准入，而 `j2_oversold` 是独立的软加分项，放宽参考点不自动获得超卖加分。魔抓采用独立的二波评分口径，见下文。
 
-一波在硬条件确认 `J < 5` 的 `2起` 参考点后，单独计算 `timing_score`（页面显示为“择时”）：取参考点到最新日之间的最低 J，定义 `j_rebound = max(0, 当前 J - 参考区间最低 J)`，并按 `10 × (1 - clip(j_rebound / 30, 0, 1))` 计分。因此当前 J 越低、较区间低点回升越少，择时越高；低 J 日线十字星可额外加 `3` 分。择时不并入上述结构评分，不改变 `score_threshold` 或硬性候选集合，也不表示收益概率或确定买点。一波结果与二波一样按择时降序、结构分降序、股票代码稳定排序。
+一波在硬条件确认动态 J 阈值的 `2起` 参考点后，单独计算 `timing_score`（页面显示为“择时”）：取参考点到最新日之间的最低 J，定义 `j_rebound = max(0, 当前 J - 参考区间最低 J)`，并按 `10 × (1 - clip(j_rebound / 30, 0, 1))` 计分。因此当前 J 越低、较区间低点回升越少，择时越高；低 J 日线十字星可额外加 `3` 分。择时不并入上述结构评分，不改变 `score_threshold` 或硬性候选集合，也不表示收益概率或确定买点。一波结果与二波一样按择时降序、结构分降序、股票代码稳定排序。
+
+### 魔抓策略
+
+`MoZhuaSelector` 是以二波结构为基础的独立策略，配置别名“魔抓策略”，默认 `activate=true`，输出 `selection_branch=mozhua_two_wave`。必须已经有两段合格上涨及第二顶部，只在第二顶后的3起参考阶段入选，不在第一顶后的2起阶段入选。普通一波、二波的缺口评分及 J<5/10/20 保持不变。魔抓允许与普通二波同时入选，不再执行“排除已有二波”。
+
+魔抓配置位于 `configs.json` 的独立条目，关闭该条目的 `activate` 即可停用，不影响一波。输出目录为 `mozhua_selection_data/`，包含 `wave_selection_results.json`、CSV 索引和 `daily/` 日线，主选股日志与策略交集仪表盘显示“魔抓策略”。独立的历史跟踪发布脚本仍保留既有输入参数，本次未扩展其报告。
+
+- 第一上涨段单独决定2起 J 阈值；第二上涨段单独决定3起 J 阈值。无缺口 J<5，向上阳线实体缺口 J<40，完整缺口 J<50，连续强势推进 J<70；参数为 `mozhua_body_j_limit`、`mozhua_full_j_limit`、`mozhua_strong_j_limit`。这些是魔抓研究初始阈值，不是普通策略默认值。
+- 魔抓的方向性缺口要求当天阳线，且开盘高于前一根实体上沿 `max(open, close)`，前日允许阴线；完整缺口额外要求当天最低价高于前日最高价。普通策略的双阳线缺口统计与评分定义不改。两种统计同时输出，可审计其差别。
+- 强势推进仍要求顶部之前 3 至 6 个收盘变化间隔、全阳线、涨幅至少15%、效率至少0.90、至少两组双阳线实体缺口且有连续衔接。不要求两段都强势，不把第一段 J<70 借给第二段。
+- 参考点须在对应顶部末端后第2至10根，同时位于对应起点后7至25根；收盘回撤5%至15%、回吐该上涨段涨幅不超过50%、不跌破对应起点，J 从对应顶部区间峰值下降至少30点。收盘采用一致价格口径。
+- 首个合格点成为候选；后续仍靠近回调最低收盘（上方2%内）且J继续下降，可以更新参考点。首次反弹远离低位或J停止下降后不再后移。2起的搜索只使用2顶之前的数据；3起只使用选股日及以前的数据。
+- 魔抓仍通过二波涨幅、周期、顶部抬高、回调、路径效率及不利波动等硬条件；不能单凭缺口与 J 放宽绕过二波结构。只有当天首次形成或继续更新3起参考点时才入选，要求3起参考点为输入历史的最后一根日线；输出 `reference_stage=3`、`reference_status=candidate`，不表示第三波已确认。
+- 停止更新参考点后，不再输出该结构的后续观察日，不等待反弹15%或突破2顶才退出。同一轮搜索遇到J停止下降或价格远离低位后终止，后续J再次下降也不恢复该轮参考点更新；支撑、历史回撤15%及回吐50%的约束仍保留。IT仅在08-17、08-18入选，08-19不再入选；GEN在08-17至08-19更新参考点，08-20起不再入选。逐日扫描结果应满足 `scan_date == j3_date`。
+- 结构评分复用二波评分，额外按两段强势推进质量的平均值乘 `impulse_quality_weight=1.0` 加分；原始满分由9.6变为10.6，展示缩放保留原标尺。择时改为3起参考点之后的J回升程度，低J十字星规则不变，不能把高J参考点称作绝对超卖。
+
+IT 历史验证：结构1起仍为07-22、1顶07-29；第一段连续强势缺口支持2起08-03（J61.29<70）。2顶08-10；08-04虽前日为阴线，但当天阳线开盘越过前日实体上沿，因此第二段有一个方向性实体缺口，支持3起08-17（J34.11<40、J下降64.49、回撤7.24%、回吐33.57%）。08-03和08-14均不输出魔抓，08-17收盘后入选。此前 `analysis/runs/mozhua_it_20260803/` 的一波式魔抓验证为废弃口径，不代表当前策略；新验证输出位于 `analysis/runs/mozhua_it_20260817/`。全量胜率尚需回测。
+
+### 阳线缺口与参考点放宽
+
+两根相邻 K 线必须都满足 `close > open`。实体缺口要求 `open[t] > close[t-1]`；完整缺口额外要求 `low[t] > high[t-1]`。等于边界不算缺口，不要求最低缺口幅度或成交量。完整缺口包含在实体缺口组数中，仅增加强度奖励，不重复计组。
+
+`bullish_gap.quality = min(1, 0.25 * body_count + 0.10 * full_count + 0.15 * consecutive_count)`。
+其中连续衔接指同一上涨段中连续两个缺口相连，例如三根连续跳空阳线为两组缺口、一次衔接。独立组数和连续组数增加时加分递增，达到上限后不再增加。一组实体缺口质量为 0.25，一组完整缺口为 0.35，两组独立完整缺口为 0.70，两组连续完整缺口为 0.85。
+
+两套策略均配置 `bullish_gap_weight=1.0`，原始缺口加分为该权重乘质量。一波直接加入结构分，二波沿用 `10 / 5.114` 展示缩放，原始满分分母同步增加。评分输出包含 `bullish_gap` 统计、`score_components` 加分和 `reference_j_limit` 实际参考阈值。一波只统计 `1起 -> 1顶`；二波统计已确认上涨段及当前起点到已观察最高收盘的上涨段，不计算回撤区间、不跨上涨段计算连续性。
+
+参考点只依据对应上涨段的缺口放宽：一波看 `1起 -> 1顶`，二波看当前配对的起点到顶部，不借用其他波或后续 K 线。无缺口仍为 `J<5`；有实体缺口为 `J<10`；有完整缺口优先用 `J<20`。参数分别为 `body_gap_reference_j_limit` 和 `full_gap_reference_j_limit`，不会把已有更宽的基础 J 阈值收紧。
+
+两套策略均从顶部区间结束后至少 2 根 K 线开始找，参考点相对该波起点需在第 7 至 25 根 K 线（索引差、含边界）内，选择首个合格点；参考收盘不得高于顶部、不得低于该波起点收盘，距顶部回撤不得超过 28%。一波的参考点是准入条件，二波的参考点用于择时，并非二波结构入选的新增硬条件。一波仍保留参考后最多观察 25 根、反弹达到 15% 等退出规则；缺口不会放宽周期、支撑或回撤约束。
+
+顶部在内部表示为 `PivotZone`：原始收盘价局部峰值是单日点（`start=end`）；相近的高点及其间浅回落满足平台合并条件时，才合并为 `start` 到 `end` 的顶部区间。默认两顶收盘价差不超过 1%、中间低点相对较高顶回落不超过 6%、合并跨度不超过 15 根 K 线。顶价取其中较高的峰值收盘价，不一定出现在区间末日。参考点搜索下限是 `top.end + 2`：若末日为周一且无休市，周二不选，周三开始允许；不是从区间内最高价日计数，也不是等两天结束后从第三天才开始选。起点后的 7 至 25 根窗口仍须同时满足。
+
+既有 `analysis/code/backtest_two_wave_target.py` 使用独立的顶后首个 `J<0` 目标价实验口径，本次未修改该实验或重跑历史结果。新评分与新参考点的效果需要重新回测，不能沿用旧胜率。
 
 连续波浪不会限制为最多三波。前两波的顶部抬高仍要求至少 `2%`；从第 3 波开始，后一顶部不再要求明显创新高，只要不比前一顶部低超过 `1%`，且其他条件仍满足，就继续保留在同一组波浪中。只有明显低于前顶，或周期、底部抬高、回调、路径效率等条件失败时，才结束当前波浪组并从后续起点重新寻找新组。
 当前正在运行的波浪期间，允许价格最多下破该浪起点 `5%`，但最新收盘必须重新站回起点上方；在容忍范围内仍保留该波组，同时使用最弱低点质量压低评分。因此 CLF 这类曾破低但尚未超过容忍区间的股票可以继续入选，但不会再获得无破低结构的满额低点分。
@@ -201,6 +239,29 @@ export DATA_SOURCE=quantdash
 export QUANTDASH_API_KEY=你的真实key
 bash us_daily.sh
 ```
+
+每日流程支持 `PY_BIN` 指定解释器（默认 `./.venv/bin/python`），不再覆盖显式设置；只检查当前数据源和选股所需的依赖。`DATA_DIR` 默认 `./data/us_stocks`，拉取的 `--out` 与选股的 `--data-dir` 使用同一个值；`CONFIG_FILE` 默认 `./configs.json`，`TRADE_DATE` 可选，仅指定选股截止日，不改变拉取范围。QuantDash 的请求范围可用 `QD_DAYS=900`、`QD_COUNT=500` 调整，默认值保持不变。配置文件不存在时在下载前退出。
+
+```bash
+PY_BIN=/path/to/python DATA_DIR=./data/us_stocks CONFIG_FILE=./configs.json bash us_daily.sh
+```
+
+本地日更和 `deploy/run_daily_cloud.sh` 都在拉取、选股或推送命令返回非零时停止并返回失败；云端入口仍使用 Tushare，默认 `DATA_DIR=./data`，并同样支持 `PY_BIN`。设置 `STOCK_TRACKING_PUSH_ENABLED=0` 可跳过推送。选股导出在同一次运行内共享各股票的完整历史 KDJ、BBD、买点计算结果，再按各策略的展示天数截取；不跨运行缓存，不改变指标预热及历史截止日。
+
+#### 日更性能与计时
+
+两套日更入口在标准输出记录 `[timing]`：拉取、选股、推送及总运行的秒数和退出码。选股还记录CSV加载、各策略、各结构化输出、交集图、仪表盘及总耗时，默认写入 `logs/selection-timing-时间戳-进程号.json`；通过 `SELECT_TIMING_OUTPUT` 指定其他路径。直接调用选股时用 `--timing-output` 开启JSON报告，阶段日志始终保留。JSON报告仅在选股正常结束时写出，失败状态看Shell阶段日志。
+
+KDJ、BBD仍用完整截止日历史计算；逐日买点只计算各策略实际展示窗口的并集，每个展示日的判断仍使用完整历史前缀。窗口前一日的黄金坑状态单独计算，保证窗口边界不会多出重复入场标记。不截短波段识别输入，不改策略参数和排序。
+
+可选开关（默认均为1）：`SELECTION_VISUALIZATION_ENABLED=0` 跳过交集PNG及交集CSV，`SELECTION_DASHBOARD_ENABLED=0` 跳过HTML仪表盘；结构化策略JSON和日线CSV仍输出。关闭开关不会删除以前生成的图表，使用方需避免误读旧文件。
+
+```bash
+SELECTION_VISUALIZATION_ENABLED=0 bash us_daily.sh
+python select_stock.py --timing-output ./logs/selection-timing.json
+```
+
+2026-09-08本地固定16股、截止2026-08-18、全部启用策略及图表的一次前后对照：CLI耗时45.612秒降到19.570秒（约2.33倍，减少57.1%）；结构化输出约31.015秒降到4.345秒。行情及配置相同，31个JSON/CSV/PNG/HTML产物哈希全部一致。该结果不含联网下载和推送，不代表全市场日更的固定加速比例。可用 `analysis/code/benchmark_daily_selection.py --label 新目录名` 复测，结果保存在 `analysis/runs/daily_performance/`，已有基准目录不会覆盖。
 
 切换到直接 Yahoo Finance Chart API：
 
@@ -222,31 +283,23 @@ export YAHOO_CHART_SKIP_FRESH_DAYS=0
 仅测试 Yahoo Chart API 单票连通性：
 
 ```bash
-./.venv/bin/python fetch_kline_yahoo_chart_us.py --smoke --smoke-symbol AAPL
+./.venv/bin/python -m data_fetch.fetch_kline_yahoo_chart_us --smoke --smoke-symbol AAPL
 ```
 
-比较三个数据源的网络效率，不会改写 `data/us_stocks`：
-
-```bash
-source ./deploy/load_env.sh
-load_env_file .env
-./.venv/bin/python benchmark_data_sources.py --days 60
-```
-
-结果写入 `benchmark_data_sources_20260821/source_benchmark_report.md`。比较时先看成功率，再看耗时；Yahoo Chart API 与 yfinance 共用 Yahoo 基础设施，二者的限流风险并不独立。
+当前仓库未包含旧版数据源基准脚本，不再提供其根目录启动命令。新增数据源比较脚本应放在 `analysis/code/`，结果写入 `analysis/runs/`。比较时先看成功率，再看耗时；Yahoo Chart API 与 yfinance 共用 Yahoo 基础设施，二者的限流风险并不独立。
 
 仅做连通性与凭证可用性测试（不跑全量）：
 
 ```bash
 cd /opt/sf
 export QUANTDASH_API_KEY=你的真实key
-./.venv/bin/python fetch_kline_quantdash_us.py --smoke --smoke-symbol AAPL.US --period 1m
+./.venv/bin/python -m data_fetch.fetch_kline_quantdash_us --smoke --smoke-symbol AAPL.US --period 1m
 ```
 
 说明：
 
 * `QUANTDASH_API_KEY` 未配置或无效时，脚本会快速失败并提示鉴权错误。
-* QuantDash 默认每只股票保留最近 `300` 根日线交易日数据；首次运行按 `count=300` 补齐，后续运行检查本地文件并只拉取最新增量，默认向前重叠 `7` 个自然日后合并去重。
+* QuantDash 默认请求 `count=500` 根数据。每日先探测基准股的最新交易日，再对每个本地文件一次性读取日期和行数；仅日期已更新且历史行数充足时跳过，否则重新请求。当前写入方式是用接口返回数据覆盖该股票 CSV，不是增量合并；需要长期历史时应明确设置足够的 `QD_COUNT` / `--count`，并备份研究输入。
 * QuantDash 批量权限可用时优先走 batch；批量权限不可用时回退到单票请求。`QD_SINGLE_WORKERS=1` 是保守稳定配置，可在确认限流余量后调高。
 * QuantDash 默认输出到 `./data/us_stocks`，CSV 列与现有流程保持一致：`date, open, close, high, low, volume, sector, industry`。
 * Yahoo Chart API 不需要 API key；它按股票逐票请求，容易受到 query1 的 IP 限流影响。
@@ -373,7 +426,9 @@ crontab -e
 
 ## 参数说明
 
-### `fetch_kline.py`
+### 数据下载参数
+
+调用方式：`python -m data_fetch.fetch_kline`。
 
 | 参数                 | 默认值               | 说明                                                                         |
 | ------------------ | ----------------- | -------------------------------------------------------------------------- |
@@ -615,17 +670,44 @@ crontab -e
 
 ## 项目结构
 
-```
+```text
 .
-├── configs.json             # 选择器参数（示例见上文）
-├── fetch_kline.py           # 从 stocklist.csv 读取并抓取 Tushare 日线（qfq）
-├── select_stock.py          # 批量选股入口
-├── Selector.py              # 策略实现（含公共指标/过滤）
-├── stocklist.csv            # 你的股票池（示例列：ts_code/symbol/...）
-├── data/                    # 行情 CSV 输出目录
-├── fetch.log                # 抓取日志
-└── select_results.log       # 选股日志
+├── select_stock.py          # 批量选股启动入口
+├── run_jxt_v7.py            # JXT 启动入口
+├── us_daily.sh              # 美股数据更新、选股、推送入口
+├── us_premarket_jxt.sh      # JXT 盘前入口
+├── install_stock_tracking_cron.sh
+├── data_fetch/              # Tushare、QuantDash、Yahoo、股票池下载
+├── strategies/              # Selector、波段识别、板块轮动、价格筛选
+│   └── jxt_v7/              # JXT 策略实现与说明
+├── features/                # BBD、阳线缺口、强势回调、均线启动特征
+├── reporting/               # 可视化与跟踪报告发布
+├── utils/                   # 安全文件读写等公共工具
+├── deploy/                  # 环境初始化、打包、云端启动辅助脚本
+├── analysis/code/           # 本地研究、回测和回归测试
+├── analysis/runs/           # 研究输出
+├── configs.json             # 策略参数，其他 configs*.json 同样留在外层
+├── data/                    # 行情，data/tools/ 保留股票池 CSV
+├── jxt_v7/                  # 仅保留原 cache/、output/ 数据目录
+└── stock_data_cache/        # 原有缓存目录
 ```
+
+所有命令从仓库根目录执行。根目录仅保留启动入口，分类目录中的可执行模块用 `python -m 包名.模块名`，不要再使用旧根目录脚本路径，也不要直接执行 `python data_fetch/xxx.py`。Python 内部使用包导入，例如 `from strategies.Selector import MoZhuaSelector`。配置中的 `class` 仍写 `MoZhuaSelector`，不需要添加包前缀。
+
+```bash
+python -m data_fetch.fetch_kline_quantdash_us --help
+python -m data_fetch.fetch_kline_yfince_us --help
+python -m data_fetch.fetch_kline_yahoo_chart_us --help
+python -m data_fetch.get_us_stocks_csv --help
+python select_stock.py --config configs.json --data-dir data/us_stocks
+python -m strategies.scan_three_wave --help
+python -m strategies.find_stock_by_price_concurrent --help
+python -m reporting.publish_stock_tracking_report --help
+python run_jxt_v7.py --help
+python -m unittest discover -s analysis/code -p 'test_*.py'
+```
+
+脚本分类不改变行情、缓存、配置和结果位置：股票池默认仍写入 `data/tools/stocklist_us.csv`，JXT 仍使用 `jxt_v7/cache/` 与 `jxt_v7/output/`。原有 `.env` 加载、日志和策略输出目录保留。`us_daily.sh`、`us_premarket_jxt.sh`、`deploy/run_daily_cloud.sh` 已同步新调用方式；已有调用这些 Shell 入口的 cron 不需要修改，外部直接调用旧 Python 路径的任务需改为上述模块命令。`analysis/` 仍按仓库约定由 Git 忽略，不随版本控制分发研究代码及结果。
 
 ---
 

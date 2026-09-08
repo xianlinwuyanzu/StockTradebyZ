@@ -4,13 +4,13 @@ from scipy.signal import find_peaks
 import numpy as np
 import pandas as pd
 
-from bbd_signals import compute_bbd_signals
-from one_wave_structure import (
+from features.bbd_signals import compute_bbd_signals
+from strategies.one_wave_structure import (
     find_active_one_wave,
     find_one_wave_preselections,
     one_wave_to_dict,
 )
-from wave_structure import active_wave_to_dict, find_active_wave
+from strategies.wave_structure import active_wave_to_dict, find_active_wave
 
 # --------------------------- 通用指标 --------------------------- #
 
@@ -1658,6 +1658,9 @@ class WaveStructureSelector:
         weekly_j_low_threshold: float = 10.0,
         score_anchor_raw: float = 5.114,
         score_reference_points: float = 10.0,
+        bullish_gap_weight: float = 1.0,
+        body_gap_reference_j_limit: float = 10.0,
+        full_gap_reference_j_limit: float = 20.0,
     ) -> None:
         self.score_threshold = float(score_threshold)
         self.min_completed_waves = max(1, int(min_completed_waves))
@@ -1698,6 +1701,9 @@ class WaveStructureSelector:
             "weekly_j_low_threshold": float(weekly_j_low_threshold),
             "score_anchor_raw": float(score_anchor_raw),
             "score_reference_points": float(score_reference_points),
+            "bullish_gap_weight": max(0.0, float(bullish_gap_weight)),
+            "body_gap_reference_j_limit": float(body_gap_reference_j_limit),
+            "full_gap_reference_j_limit": float(full_gap_reference_j_limit),
         }
 
     def select(
@@ -1772,12 +1778,19 @@ class OneWaveEntrySelector:
         support_close_tolerance: float = 0.0,
         exclude_existing_two_wave: bool = True,
         existing_two_wave_score_threshold: float = 1.0,
+        bullish_gap_weight: float = 1.0,
+        body_gap_reference_j_limit: float = 10.0,
+        full_gap_reference_j_limit: float = 20.0,
+        impulse_pullback_enabled: bool = False,
+        impulse_quality_weight: float = 1.0,
+        impulse_reference_j_limit: float = 70.0,
     ) -> None:
         self.score_threshold = float(score_threshold)
         self.data_days = max(1, int(data_days))
         self.output_dir = output_dir
         self.wave_config = {
             "min_wave_bars": max(1, int(min_wave_bars)),
+            "selection_branch": "low_j_pullback",
             "max_wave_bars": max(1, int(max_wave_bars)),
             "min_up_return": float(min_up_return),
             "min_path_efficiency": float(min_path_efficiency),
@@ -1803,6 +1816,12 @@ class OneWaveEntrySelector:
             "max_pullback": float(max_pullback),
             "max_observation_after_reference": max(1, int(max_observation_after_reference)),
             "support_close_tolerance": max(0.0, float(support_close_tolerance)),
+            "impulse_pullback_enabled": bool(impulse_pullback_enabled),
+            "impulse_quality_weight": max(0.0, float(impulse_quality_weight)),
+            "impulse_reference_j_limit": float(impulse_reference_j_limit),
+            "bullish_gap_weight": max(0.0, float(bullish_gap_weight)),
+            "body_gap_reference_j_limit": float(body_gap_reference_j_limit),
+            "full_gap_reference_j_limit": float(full_gap_reference_j_limit),
         }
         self.exclude_existing_two_wave = bool(exclude_existing_two_wave)
         self.existing_two_wave_score_threshold = float(existing_two_wave_score_threshold)
@@ -1840,6 +1859,7 @@ class OneWaveEntrySelector:
                 candidate.start1.start,
                 candidate.top1.start,
                 candidate.j2_reference_index,
+                candidate.selection_branch,
             ) if candidate is not None else None
             preselection_rows: List[Dict[str, Any]] = []
             for preselection in preselection_candidates:
@@ -1847,6 +1867,7 @@ class OneWaveEntrySelector:
                     preselection.start1.start,
                     preselection.top1.start,
                     preselection.j2_reference_index,
+                    preselection.selection_branch,
                 )
                 detail = one_wave_to_dict(
                     preselection, hist, self.score_threshold
@@ -1883,4 +1904,48 @@ class OneWaveEntrySelector:
                 code,
             ),
         )
+
+
+class MoZhuaSelector(WaveStructureSelector):
+    """魔抓策略：前段缺口放宽下一起点，观察二顶后的三起参考。"""
+
+    def __init__(
+        self,
+        output_dir: str = "./mozhua_selection_data",
+        impulse_quality_weight: float = 1.0,
+        mozhua_body_j_limit: float = 40.0,
+        mozhua_full_j_limit: float = 50.0,
+        mozhua_strong_j_limit: float = 70.0,
+        mozhua_min_j_drop: float = 30.0,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(output_dir=output_dir, **kwargs)
+        self.wave_config.update({
+            "impulse_quality_weight": max(0.0, float(impulse_quality_weight)),
+            "mozhua_body_j_limit": float(mozhua_body_j_limit),
+            "mozhua_full_j_limit": float(mozhua_full_j_limit),
+            "mozhua_strong_j_limit": float(mozhua_strong_j_limit),
+            "mozhua_min_j_drop": float(mozhua_min_j_drop),
+            "score_threshold": self.score_threshold,
+        })
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        from strategies.mozhua_structure import find_mozhua
+
+        self.result_details = {}
+        for code, frame in data.items():
+            if frame is None or frame.empty:
+                continue
+            history = frame.loc[frame["date"] <= date].copy()
+            history["code"] = code
+            detail = find_mozhua(history, self.wave_config)
+            if detail is None:
+                continue
+            detail["data_days"] = self.data_days
+            detail["output_dir"] = self.output_dir
+            self.result_details[code] = detail
+        return sorted(self.result_details, key=lambda code: (
+            -self.result_details[code]["timing_score"],
+            -self.result_details[code]["score"], code,
+        ))
 

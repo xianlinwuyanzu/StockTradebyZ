@@ -5,14 +5,15 @@ import importlib
 import json
 import logging
 import sys
+from time import perf_counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 import pandas as pd
 
-from selection_visualizer import render_selection_dashboard, render_selection_overlap
-from scan_three_wave import _compute_kdj
-from bbd_signals import SIGNAL_COLUMNS, compute_bbd_signals
+from reporting.selection_visualizer import render_selection_dashboard, render_selection_overlap
+from strategies.scan_three_wave import _compute_kdj
+from features.bbd_signals import SIGNAL_COLUMNS, compute_bbd_signals
 
 # ---------- 日志 ----------
 logging.basicConfig(
@@ -70,7 +71,7 @@ def instantiate_selector(cfg: Dict[str, Any]):
         raise ValueError("缺少 class 字段")
 
     try:
-        module = importlib.import_module("Selector")
+        module = importlib.import_module("strategies.Selector")
         cls = getattr(module, cls_name)
     except (ModuleNotFoundError, AttributeError) as e:
         raise ImportError(f"无法加载 Selector.{cls_name}: {e}") from e
@@ -109,6 +110,7 @@ def _selector_passes_prefix(selector: Any, history: pd.DataFrame) -> bool:
 def _compute_rocket_signals(
     full_history: pd.DataFrame,
     selectors: Dict[str, Any],
+    start_index: int = 0,
 ) -> pd.Series:
     """按现有三个买点 Selector 的判定，生成逐日火箭买点事件。"""
     signal_rows: list[list[str]] = [[] for _ in range(len(full_history))]
@@ -118,7 +120,14 @@ def _compute_rocket_signals(
     previous_golden_pit_active = False
     golden_pit_entry_only = bool(getattr(golden_pit_selector, "golden_pit_entry_only", False))
 
-    for index in range(len(full_history)):
+    if not any((burst_selector, golden_pit_selector, market_selector)):
+        return pd.Series(signal_rows, index=full_history.index, dtype=object)
+
+    start_index = max(0, min(start_index, len(full_history)))
+    if start_index > 0 and not golden_pit_entry_only:
+        previous_golden_pit_active = _selector_passes_prefix(golden_pit_selector, full_history.iloc[:start_index])
+
+    for index in range(start_index, len(full_history)):
         prefix = full_history.iloc[: index + 1]
         if _selector_passes_prefix(burst_selector, prefix):
             signal_rows[index].append("起爆")
@@ -144,8 +153,14 @@ def write_wave_selection_outputs(
     strategy_name: str,
     signal_selectors: Dict[str, Any] | None = None,
     preselection_details: Dict[str, List[Dict[str, Any]]] | None = None,
+    daily_history_cache: Dict[str, pd.DataFrame] | None = None,
+    signal_history_days: int | None = None,
 ) -> None:
-    """写出结构化选股评分索引和前端可读取的最近日线数据。"""
+    """写出评分及日线；缓存仅在相同运行内共享，信号窗口需覆盖所有输出天数。"""
+    if signal_history_days is not None and signal_history_days < max(1, data_days):
+        raise ValueError("signal_history_days must cover data_days")
+    if daily_history_cache is None:
+        daily_history_cache = {}
     output_dir.mkdir(parents=True, exist_ok=True)
     daily_dir = output_dir / "daily"
     daily_dir.mkdir(parents=True, exist_ok=True)
@@ -163,30 +178,22 @@ def write_wave_selection_outputs(
         if hist is None or hist.empty:
             daily_items[code] = None
             return None
-        history = (
-            hist[hist["date"] <= trade_date]
-            .sort_values("date")
-            .drop_duplicates("date")
-            .tail(max(1, data_days))
-            .reset_index(drop=True)
-        )
-        if history.empty:
-            daily_items[code] = None
-            return None
-
-        # Compute J on the full available history before taking the display window,
-        # so the 50-day output keeps the same indicator warm-up as wave detection.
-        history = history.copy()
-        full_history = hist[hist["date"] <= trade_date].sort_values("date").drop_duplicates("date").reset_index(drop=True)
-        kdj_values = _compute_kdj(full_history)
-        for column in ("K", "D", "J"):
-            history[column] = kdj_values[column].iloc[-len(history):].to_numpy()
-        bbd_values = compute_bbd_signals(full_history)
-        for column in SIGNAL_COLUMNS:
-            history[column] = bbd_values[column].iloc[-len(history):].to_numpy()
-        rocket_values = _compute_rocket_signals(full_history, signal_selectors or {})
-        history["rocket_signals"] = rocket_values.iloc[-len(history):].to_numpy()
-        recent = history
+        if code not in daily_history_cache:
+            full_history = hist[hist["date"] <= trade_date].sort_values("date").drop_duplicates("date").reset_index(drop=True)
+            if full_history.empty:
+                daily_items[code] = None
+                return None
+            kdj_values = _compute_kdj(full_history)
+            bbd_values = compute_bbd_signals(full_history)
+            signal_start = 0 if signal_history_days is None else max(0, len(full_history) - signal_history_days)
+            rocket_values = _compute_rocket_signals(full_history, signal_selectors or {}, start_index=signal_start)
+            for column in ("K", "D", "J"):
+                full_history[column] = kdj_values[column].to_numpy()
+            for column in SIGNAL_COLUMNS:
+                full_history[column] = bbd_values[column].to_numpy()
+            full_history["rocket_signals"] = rocket_values.to_numpy()
+            daily_history_cache[code] = full_history
+        recent = daily_history_cache[code].tail(max(1, data_days)).reset_index(drop=True).copy()
 
         daily_path = daily_dir / f"{code}.csv"
         recent.to_csv(daily_path, index=False, encoding="utf-8-sig")
@@ -295,7 +302,16 @@ def main():
     p.add_argument("--dashboard-output", default="./selection_dashboard.html", help="交互式选股仪表盘输出路径")
     p.add_argument("--no-visualization", action="store_true", help="不生成策略交集可视化")
     p.add_argument("--no-dashboard", action="store_true", help="不生成交互式选股仪表盘")
+    p.add_argument("--timing-output", help="可选的分阶段耗时 JSON 输出路径")
     args = p.parse_args()
+    run_started = perf_counter()
+    timings: List[Dict[str, Any]] = []
+
+    def record_timing(stage: str, started: float, **context: Any) -> None:
+        elapsed = perf_counter() - started
+        timings.append({"stage": stage, "seconds": round(elapsed, 6), **context})
+        logger.info("耗时 [%s]: %.3fs %s", stage, elapsed, context or "")
+
     logger.info("选股运行开始")
 
     # --- 加载行情 ---
@@ -313,7 +329,9 @@ def main():
         logger.error("股票池为空！")
         sys.exit(1)
 
+    stage_started = perf_counter()
     data = load_data(data_dir, codes)
+    record_timing("load_data", stage_started, symbols=len(data))
     if not data:
         logger.error("未能加载任何行情数据")
         sys.exit(1)
@@ -352,7 +370,9 @@ def main():
             logger.error("跳过配置 %s：%s", cfg, e)
             continue
 
+        stage_started = perf_counter()
         picks = selector.select(trade_date, data)
+        record_timing("selector", stage_started, strategy=alias, selected=len(picks))
         selection_sets[alias] = picks
         signal_selectors[selector.__class__.__name__] = selector
 
@@ -383,6 +403,8 @@ def main():
         logger.info("符合条件股票数: %d", len(picks))
         logger.info("%s", ", ".join(picks) if picks else "无符合条件股票")
 
+    daily_history_cache: Dict[str, pd.DataFrame] = {}
+    signal_history_days = max((spec[4] for spec in wave_output_specs), default=1)
     for (
         alias,
         details,
@@ -392,6 +414,7 @@ def main():
         score_threshold,
         output_signal_selectors,
     ) in wave_output_specs:
+        stage_started = perf_counter()
         write_wave_selection_outputs(
             details=details,
             data=data,
@@ -402,7 +425,10 @@ def main():
             strategy_name=alias,
             signal_selectors=output_signal_selectors,
             preselection_details=preselection_details,
+            daily_history_cache=daily_history_cache,
+            signal_history_days=signal_history_days,
         )
+        record_timing("wave_output", stage_started, strategy=alias, cached_symbols=len(daily_history_cache))
         logger.info(
             "结构化选股结果: %s（%s，%d 只，最近 %d 根日线）",
             output_dir,
@@ -412,17 +438,30 @@ def main():
         )
 
     if not args.no_visualization:
+        stage_started = perf_counter()
         chart_path = Path(args.visualization_output)
         detail_path = Path(args.intersection_output)
         intersections = render_selection_overlap(selection_sets, chart_path, detail_path, trade_date)
+        record_timing("visualization", stage_started)
         logger.info("策略交集圆形图: %s", chart_path)
         logger.info("策略交集明细: %s", detail_path)
         logger.info("非空策略组合数: %d", len(intersections))
 
     if not args.no_dashboard:
+        stage_started = perf_counter()
         dashboard_path = Path(args.dashboard_output)
         render_selection_dashboard(selection_sets, dashboard_path, trade_date)
+        record_timing("dashboard", stage_started)
         logger.info("交互式选股仪表盘: %s", dashboard_path)
+
+    record_timing("total", run_started)
+    if args.timing_output:
+        timing_path = Path(args.timing_output)
+        timing_path.parent.mkdir(parents=True, exist_ok=True)
+        timing_path.write_text(json.dumps({
+            "trade_date": trade_date.date().isoformat(),
+            "symbols": len(data), "stages": timings,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

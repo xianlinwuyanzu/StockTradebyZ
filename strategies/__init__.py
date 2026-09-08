@@ -1,0 +1,1 @@
+"""Stock selection strategies and wave structure detectors."""

@@ -7,7 +7,7 @@ import re
 import pandas as pd
 from datetime import datetime
 
-from Selector import compute_kdj
+from strategies.Selector import compute_kdj
 from select_stock import load_data
 
 

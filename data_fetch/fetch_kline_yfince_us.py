@@ -15,7 +15,7 @@ import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
 from datetime import datetime, timedelta
-from safe_io import is_safe_ticker, write_dataframe_csv
+from utils.safe_io import is_safe_ticker, write_dataframe_csv
 
 # --------------------------- 配置 --------------------------- #
 warnings.filterwarnings("ignore")

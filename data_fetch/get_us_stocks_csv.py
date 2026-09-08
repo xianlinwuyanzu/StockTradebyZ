@@ -35,7 +35,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("USCoreStocks")
 
-OUT_DIR = Path(__file__).resolve().parent
+OUT_DIR = Path(__file__).resolve().parents[1] / "data" / "tools"
 OUT_FILE = OUT_DIR / "stocklist_us.csv"
 
 GICS_SECTORS = (

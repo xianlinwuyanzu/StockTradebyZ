@@ -9,6 +9,6 @@ if [[ ! -x "$PY_BIN" ]]; then
 fi
 
 echo ">>> JXT v7 premarket single refresh started"
-"$PY_BIN" jxt_v7/run_jxt_v7.py --ticker SPY --output-dir ./jxt_v7/output --cache-dir ./jxt_v7/cache
+"$PY_BIN" run_jxt_v7.py --ticker SPY --output-dir ./jxt_v7/output --cache-dir ./jxt_v7/cache
 
 echo ">>> JXT v7 premarket run completed"

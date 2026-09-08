@@ -12,9 +12,17 @@ mkdir -p ./logs
 
 source ./deploy/load_env.sh
 load_env_file ./.env
+source ./deploy/daily_runtime.sh
+init_daily_runtime
 
-if [[ ! -f ./.venv/bin/python ]]; then
-  echo "Missing virtual environment. Run deploy/bootstrap_venv.sh first."
+PY_BIN="${PY_BIN:-./.venv/bin/python}"
+if ! command -v "$PY_BIN" >/dev/null 2>&1; then
+  echo "Python is not executable: $PY_BIN. Set PY_BIN or run deploy/bootstrap_venv.sh first."
+  exit 1
+fi
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "Config file does not exist: $CONFIG_FILE"
   exit 1
 fi
 
@@ -23,17 +31,18 @@ if [[ -z "${TUSHARE_TOKEN:-}" ]]; then
   exit 1
 fi
 
-./.venv/bin/python fetch_kline.py --out "$DATA_DIR"
+run_timed_stage fetch "$PY_BIN" -m data_fetch.fetch_kline --out "$DATA_DIR"
 if [[ -n "$TRADE_DATE" ]]; then
-  ./.venv/bin/python select_stock.py --data-dir "$DATA_DIR" --config "$CONFIG_FILE" --date "$TRADE_DATE"
+  run_timed_stage selection "$PY_BIN" select_stock.py --data-dir "$DATA_DIR" --config "$CONFIG_FILE" --date "$TRADE_DATE" "${SELECTION_EXTRA_ARGS[@]}"
 else
-  ./.venv/bin/python select_stock.py --data-dir "$DATA_DIR" --config "$CONFIG_FILE"
+  run_timed_stage selection "$PY_BIN" select_stock.py --data-dir "$DATA_DIR" --config "$CONFIG_FILE" "${SELECTION_EXTRA_ARGS[@]}"
 fi
 
 if [[ "${STOCK_TRACKING_PUSH_ENABLED:-1}" == "1" ]]; then
   echo "Publishing stock tracking reports..."
-  if ! ./.venv/bin/python publish_stock_tracking_report.py --log ./select_results.log; then
+  if ! run_timed_stage publish "$PY_BIN" -m reporting.publish_stock_tracking_report --log ./select_results.log; then
     echo "Stock tracking report publish failed (daily selection is complete)"
+    exit 1
   fi
 fi
 
