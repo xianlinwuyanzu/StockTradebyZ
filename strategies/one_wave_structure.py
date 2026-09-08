@@ -360,7 +360,7 @@ def _build_candidate(
     impulse_pullback: ImpulsePullback | None = None,
 ) -> OneWaveCandidate | None:
     latest_index = len(frame) - 1
-    if latest_index < j2_reference_index or (latest_index == j2_reference_index and impulse_pullback is None):
+    if latest_index < j2_reference_index:
         return None
     current_period = latest_index - start1.start
     if enforce_exit_rules:
