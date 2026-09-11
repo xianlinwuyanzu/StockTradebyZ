@@ -190,6 +190,8 @@ weekly_j_reset
 
 周线 J 使用 `W-FRI` 聚合的完整周线，取 `1起` 之前最近一根已完成周线，向前看最多 26 周；`周线 J <= 10` 且此前峰值 `>= 60` 时记录为 `weekly_j_reset=true`。这个条件目前是软评分项，不是硬过滤。
 
+二波另有独立的当前周线 J 硬过滤：`weekly_j_rebound_filter_enabled=true` 时，候选必须满足截止选股日的动态周线 `weekly_j_current < 80`，并且最近 26 周内出现过 `J >= 60` 的高位、随后回落到 `J <= 50` 的低点，当前 J 已从该低点至少回升 8 点，且最近 2 根周线 J 连续上升。通过结果会输出 `weekly_j_rebound_filter_pass=true`，并附带 `weekly_j_rebound_phase`、`weekly_j_current`、`weekly_j_rebound_prior_peak`、`weekly_j_rebound_trough`、`weekly_j_rebound_amount` 和 `weekly_j_recent_change`，方便前端继续筛选或展示。
+
 一波入场策略要求第一上涨段通过涨幅、周期、路径效率和上涨不利波动等硬条件，随后在规定观察窗口内出现满足动态 J 阈值的参考点（无缺口仍为严格 `J < 5`）；最新收盘不能跌破 `1起`，回撤不能超过 `28%`，并且不能已经形成有效二波。通过硬条件后，`score_threshold` 默认仍为 `1.0`，评分只用于候选排序，不代表收益概率：
 
 | 评分分项 | 最高分 | 计算依据 |

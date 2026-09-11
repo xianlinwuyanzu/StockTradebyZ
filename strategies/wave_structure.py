@@ -66,6 +66,16 @@ class ActiveWave:
     weekly_j_drop_before_start: float | None
     weekly_j_reset: bool
     weekly_j_reset_score: float
+    weekly_j_rebound_filter_pass: bool
+    weekly_j_rebound_phase: str
+    weekly_j_current: float | None
+    weekly_j_current_week_date: pd.Timestamp | None
+    weekly_j_rebound_prior_peak: float | None
+    weekly_j_rebound_prior_peak_date: pd.Timestamp | None
+    weekly_j_rebound_trough: float | None
+    weekly_j_rebound_trough_date: pd.Timestamp | None
+    weekly_j_rebound_amount: float | None
+    weekly_j_recent_change: float | None
     complete_wave_periods: tuple[int, ...]
     up_returns: tuple[float, ...]
     pullbacks: tuple[float, ...]
@@ -471,15 +481,10 @@ def _start_price_context(
     }
 
 
-def _weekly_j_context(
-    frame: pd.DataFrame,
-    start_index: int,
-    cfg: dict[str, float | int],
-) -> dict[str, Any]:
-    start_date = pd.Timestamp(frame["date"].iloc[start_index])
+def _weekly_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
     daily = frame[["date", "open", "high", "low", "close", "volume"]].copy()
     daily["date"] = pd.to_datetime(daily["date"])
-    weekly = (
+    return (
         daily.set_index("date")
         .resample("W-FRI")
         .agg({
@@ -492,6 +497,15 @@ def _weekly_j_context(
         .dropna(subset=["open", "high", "low", "close"])
         .reset_index()
     )
+
+
+def _weekly_j_context(
+    frame: pd.DataFrame,
+    start_index: int,
+    cfg: dict[str, float | int],
+) -> dict[str, Any]:
+    start_date = pd.Timestamp(frame["date"].iloc[start_index])
+    weekly = _weekly_ohlcv(frame)
     completed = weekly[weekly["date"] < start_date].reset_index(drop=True)
     if completed.empty:
         return {
@@ -525,6 +539,118 @@ def _weekly_j_context(
         "drop": drop,
         "reset": reset,
         "score": 0.45 * low_score + 0.30 * peak_score + 0.25 * drop_score,
+    }
+
+
+def _weekly_j_rebound_context(
+    frame: pd.DataFrame,
+    cfg: dict[str, float | int],
+) -> dict[str, Any]:
+    weekly = _weekly_ohlcv(frame)
+    min_weeks = max(6, int(cfg.get("weekly_j_recent_rising_weeks", 2)) + 4)
+    if len(weekly) < min_weeks:
+        return {
+            "pass": False,
+            "phase": "insufficient_data",
+            "current": None,
+            "current_week_date": None,
+            "prior_peak": None,
+            "prior_peak_date": None,
+            "trough": None,
+            "trough_date": None,
+            "rebound_amount": None,
+            "recent_change": None,
+        }
+
+    weekly_j = _compute_j(weekly)
+    weekly = weekly.assign(J=weekly_j.to_numpy())
+    lookback = weekly.tail(max(min_weeks, int(cfg["weekly_j_rebound_lookback_weeks"]))).reset_index(drop=True)
+    current_row = lookback.iloc[-1]
+    current_j = float(current_row["J"])
+    current_week_date = pd.Timestamp(current_row["date"])
+    previous_j = float(lookback["J"].iloc[-2]) if len(lookback) >= 2 else current_j
+    recent_change = current_j - previous_j
+
+    current_max = float(cfg["weekly_j_current_max"])
+    if current_j >= current_max:
+        return {
+            "pass": False,
+            "phase": "too_high",
+            "current": current_j,
+            "current_week_date": current_week_date,
+            "prior_peak": None,
+            "prior_peak_date": None,
+            "trough": None,
+            "trough_date": None,
+            "rebound_amount": None,
+            "recent_change": recent_change,
+        }
+
+    prior_high_min = float(cfg["weekly_j_rebound_prior_high_min"])
+    trough_max = float(cfg["weekly_j_rebound_trough_max"])
+    min_rebound = float(cfg["weekly_j_min_rebound"])
+    rising_weeks = max(1, int(cfg["weekly_j_recent_rising_weeks"]))
+    rising_window = lookback["J"].tail(rising_weeks + 1).to_numpy(dtype=float)
+    recent_rising = len(rising_window) >= 2 and bool(np.all(np.diff(rising_window) > 0.0))
+
+    last_pos = len(lookback) - 1
+    prior_to_current = lookback.iloc[:last_pos]
+    peak_pos = int(prior_to_current["J"].idxmax())
+    peak_j = float(lookback["J"].iloc[peak_pos])
+    trough_slice = lookback.iloc[peak_pos + 1 : last_pos]
+    if peak_j < prior_high_min or trough_slice.empty:
+        phase = "no_prior_high" if peak_j < prior_high_min else "no_pullback_trough"
+        return {
+            "pass": False,
+            "phase": phase,
+            "current": current_j,
+            "current_week_date": current_week_date,
+            "prior_peak": None,
+            "prior_peak_date": None,
+            "trough": None,
+            "trough_date": None,
+            "rebound_amount": None,
+            "recent_change": recent_change,
+        }
+
+    trough_pos = int(trough_slice["J"].idxmin())
+    trough_j = float(lookback["J"].iloc[trough_pos])
+    if trough_j > trough_max:
+        return {
+            "pass": False,
+            "phase": "no_pullback_trough",
+            "current": current_j,
+            "current_week_date": current_week_date,
+            "prior_peak": peak_j,
+            "prior_peak_date": pd.Timestamp(lookback["date"].iloc[peak_pos]),
+            "trough": None,
+            "trough_date": None,
+            "rebound_amount": None,
+            "recent_change": recent_change,
+        }
+
+    rebound_amount = current_j - trough_j
+    if rebound_amount < min_rebound:
+        phase = "not_rebounding"
+        passes = False
+    elif not recent_rising:
+        phase = "falling_after_rebound"
+        passes = False
+    else:
+        phase = "rebounding"
+        passes = True
+
+    return {
+        "pass": passes,
+        "phase": phase,
+        "current": current_j,
+        "current_week_date": current_week_date,
+        "prior_peak": peak_j,
+        "prior_peak_date": pd.Timestamp(lookback["date"].iloc[peak_pos]),
+        "trough": trough_j,
+        "trough_date": pd.Timestamp(lookback["date"].iloc[trough_pos]),
+        "rebound_amount": rebound_amount,
+        "recent_change": recent_change,
     }
 
 
@@ -851,6 +977,7 @@ def _build_active_candidate(
 
     start_context = _start_price_context(frame, starts[0].start, cfg)
     weekly_context = _weekly_j_context(frame, starts[0].start, cfg)
+    weekly_rebound_context = _weekly_j_rebound_context(frame, cfg)
     completed_lower_low_qualities = tuple(
         _lower_low_quality(value, cfg)
         for value in tuple(completed_metrics.get("higher_lows", ()))
@@ -976,6 +1103,16 @@ def _build_active_candidate(
         weekly_j_drop_before_start=weekly_context["drop"],
         weekly_j_reset=bool(weekly_context["reset"]),
         weekly_j_reset_score=float(weekly_context["score"]),
+        weekly_j_rebound_filter_pass=bool(weekly_rebound_context["pass"]),
+        weekly_j_rebound_phase=str(weekly_rebound_context["phase"]),
+        weekly_j_current=weekly_rebound_context["current"],
+        weekly_j_current_week_date=weekly_rebound_context["current_week_date"],
+        weekly_j_rebound_prior_peak=weekly_rebound_context["prior_peak"],
+        weekly_j_rebound_prior_peak_date=weekly_rebound_context["prior_peak_date"],
+        weekly_j_rebound_trough=weekly_rebound_context["trough"],
+        weekly_j_rebound_trough_date=weekly_rebound_context["trough_date"],
+        weekly_j_rebound_amount=weekly_rebound_context["rebound_amount"],
+        weekly_j_recent_change=weekly_rebound_context["recent_change"],
         complete_wave_periods=tuple(completed_metrics["complete_periods"]),
         up_returns=tuple(completed_metrics["up_returns"]),
         pullbacks=tuple(completed_metrics["pullbacks"]),
@@ -1023,6 +1160,7 @@ def find_active_wave(
     pivots = _refine_low_starts(work, pivots, cfg)
     j_values = _compute_j(work)
     possible: list[ActiveWave] = []
+    use_weekly_rebound_filter = bool(cfg.get("weekly_j_rebound_filter_enabled", 0))
 
     for start_index, pivot in enumerate(pivots):
         if pivot.kind != "L":
@@ -1062,7 +1200,10 @@ def find_active_wave(
                         current_wave_number=prefix_length + 1,
                         cfg=cfg,
                     )
-                    if candidate is not None:
+                    if candidate is not None and (
+                        not use_weekly_rebound_filter
+                        or candidate.weekly_j_rebound_filter_pass
+                    ):
                         possible.append(candidate)
 
             candidate = _build_active_candidate(
@@ -1075,7 +1216,10 @@ def find_active_wave(
                 current_wave_number=prefix_length,
                 cfg=cfg,
             )
-            if candidate is not None:
+            if candidate is not None and (
+                not use_weekly_rebound_filter
+                or candidate.weekly_j_rebound_filter_pass
+            ):
                 possible.append(candidate)
             break
 
@@ -1192,6 +1336,28 @@ def active_wave_to_dict(candidate: ActiveWave, frame: pd.DataFrame, score_thresh
         "weekly_j_drop_before_start": candidate.weekly_j_drop_before_start,
         "weekly_j_reset": candidate.weekly_j_reset,
         "weekly_j_reset_score": candidate.weekly_j_reset_score,
+        "weekly_j_rebound_filter_pass": candidate.weekly_j_rebound_filter_pass,
+        "weekly_j_rebound_phase": candidate.weekly_j_rebound_phase,
+        "weekly_j_current": candidate.weekly_j_current,
+        "weekly_j_current_week_date": (
+            candidate.weekly_j_current_week_date.date().isoformat()
+            if candidate.weekly_j_current_week_date is not None
+            else None
+        ),
+        "weekly_j_rebound_prior_peak": candidate.weekly_j_rebound_prior_peak,
+        "weekly_j_rebound_prior_peak_date": (
+            candidate.weekly_j_rebound_prior_peak_date.date().isoformat()
+            if candidate.weekly_j_rebound_prior_peak_date is not None
+            else None
+        ),
+        "weekly_j_rebound_trough": candidate.weekly_j_rebound_trough,
+        "weekly_j_rebound_trough_date": (
+            candidate.weekly_j_rebound_trough_date.date().isoformat()
+            if candidate.weekly_j_rebound_trough_date is not None
+            else None
+        ),
+        "weekly_j_rebound_amount": candidate.weekly_j_rebound_amount,
+        "weekly_j_recent_change": candidate.weekly_j_recent_change,
         "complete_wave_periods": list(candidate.complete_wave_periods),
         "up_returns": list(candidate.up_returns),
         "pullbacks": list(candidate.pullbacks),

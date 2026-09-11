@@ -201,6 +201,13 @@
         "weekly_j_lookback_weeks": 26,
         "weekly_j_high_threshold": 60,
         "weekly_j_low_threshold": 10,
+        "weekly_j_rebound_filter_enabled": true,
+        "weekly_j_current_max": 80,
+        "weekly_j_rebound_lookback_weeks": 26,
+        "weekly_j_rebound_prior_high_min": 60,
+        "weekly_j_rebound_trough_max": 50,
+        "weekly_j_min_rebound": 8,
+        "weekly_j_recent_rising_weeks": 2,
         "score_anchor_raw": 5.114,
         "score_reference_points": 10
       }
