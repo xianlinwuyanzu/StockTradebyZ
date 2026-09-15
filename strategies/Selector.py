@@ -1656,7 +1656,7 @@ class WaveStructureSelector:
         weekly_j_lookback_weeks: int = 26,
         weekly_j_high_threshold: float = 60.0,
         weekly_j_low_threshold: float = 10.0,
-        weekly_j_rebound_filter_enabled: bool = True,
+        weekly_j_rebound_filter_enabled: bool = False,
         weekly_j_current_max: float = 80.0,
         weekly_j_rebound_lookback_weeks: int = 26,
         weekly_j_rebound_prior_high_min: float = 60.0,
