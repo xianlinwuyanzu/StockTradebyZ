@@ -13,7 +13,11 @@ load_env_file() {
     return 1
   }
 
-  mode="$(stat -c '%a' -- "$env_file")"
+  if stat -c '%a' -- "$env_file" >/dev/null 2>&1; then
+    mode="$(stat -c '%a' -- "$env_file")"
+  else
+    mode="$(stat -f '%Lp' -- "$env_file")"
+  fi
   mode_number=$((10#$mode))
   group_bits=$(((mode_number / 10) % 10))
   other_bits=$((mode_number % 10))

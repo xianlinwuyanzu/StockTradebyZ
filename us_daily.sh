@@ -18,6 +18,10 @@ CONFIG_FILE="${CONFIG_FILE:-./configs.json}"
 TRADE_DATE="${TRADE_DATE:-}"
 QD_DAYS="${QD_DAYS:-900}"
 QD_COUNT="${QD_COUNT:-500}"
+STOCK_SAVE_MODE="${STOCK_SAVE_MODE:-merge}"
+QD_SAVE_MODE="${QD_SAVE_MODE:-$STOCK_SAVE_MODE}"
+YFINANCE_SAVE_MODE="${YFINANCE_SAVE_MODE:-$STOCK_SAVE_MODE}"
+YAHOO_CHART_SAVE_MODE="${YAHOO_CHART_SAVE_MODE:-$STOCK_SAVE_MODE}"
 FRED_SPX_ENABLED="${FRED_SPX_ENABLED:-1}"
 FRED_SPX_SERIES_ID="${FRED_SPX_SERIES_ID:-SP500}"
 FRED_SPX_OUTPUT="${FRED_SPX_OUTPUT:-./data/indices/SPX_FRED.csv}"
@@ -56,17 +60,20 @@ echo ">>> 开始更新K线数据..."
 case "$DATA_SOURCE" in
 	yfinance)
 		echo ">>> 数据源: yfinance"
-		run_timed_stage fetch "$PY_BIN" -m data_fetch.fetch_kline_yfince_us --out "$DATA_DIR"
+		echo ">>> yfinance save-mode: $YFINANCE_SAVE_MODE"
+		run_timed_stage fetch "$PY_BIN" -m data_fetch.fetch_kline_yfince_us --out "$DATA_DIR" --save-mode "$YFINANCE_SAVE_MODE"
 		;;
 	quantdash)
 		echo ">>> 数据源: QuantDash"
 		echo ">>> QuantDash skip-fresh-days: $QD_SKIP_FRESH_DAYS"
-		run_timed_stage fetch "$PY_BIN" -m data_fetch.fetch_kline_quantdash_us --out "$DATA_DIR" --days "$QD_DAYS" --count "$QD_COUNT" --skip-fresh-days "$QD_SKIP_FRESH_DAYS"
+		echo ">>> QuantDash save-mode: $QD_SAVE_MODE"
+		run_timed_stage fetch "$PY_BIN" -m data_fetch.fetch_kline_quantdash_us --out "$DATA_DIR" --days "$QD_DAYS" --count "$QD_COUNT" --save-mode "$QD_SAVE_MODE" --skip-fresh-days "$QD_SKIP_FRESH_DAYS"
 		;;
 	yahoo_chart)
 		echo ">>> 数据源: Yahoo Finance Chart API"
 		echo ">>> Yahoo Chart skip-fresh-days: $YAHOO_CHART_SKIP_FRESH_DAYS"
-		run_timed_stage fetch "$PY_BIN" -m data_fetch.fetch_kline_yahoo_chart_us --out "$DATA_DIR" --skip-fresh-days "$YAHOO_CHART_SKIP_FRESH_DAYS"
+		echo ">>> Yahoo Chart save-mode: $YAHOO_CHART_SAVE_MODE"
+		run_timed_stage fetch "$PY_BIN" -m data_fetch.fetch_kline_yahoo_chart_us --out "$DATA_DIR" --save-mode "$YAHOO_CHART_SAVE_MODE" --skip-fresh-days "$YAHOO_CHART_SKIP_FRESH_DAYS"
 		;;
 	*)
 		echo ">>> 未知 DATA_SOURCE: $DATA_SOURCE (可选: yfinance, quantdash, yahoo_chart)"

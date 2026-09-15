@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 import requests
-from utils.safe_io import is_safe_ticker, ticker_csv_path, write_dataframe_csv
+from utils.safe_io import is_safe_ticker, merge_dataframe_with_csv, ticker_csv_path, write_dataframe_csv
 
 PROFILE_FALLBACK = "Unknown"
 DEFAULT_STOCKLIST = Path("./data/tools/stocklist_sp400_20260902.csv")
@@ -23,6 +23,7 @@ DEFAULT_PROXY = os.environ.get("YAHOO_CHART_PROXY") or os.environ.get("YF_PROXY"
 DEFAULT_TIMEOUT = float(os.environ.get("YAHOO_CHART_TIMEOUT", "30"))
 DEFAULT_MAX_RETRIES = int(os.environ.get("YAHOO_CHART_MAX_RETRIES", "3"))
 DEFAULT_REQUEST_PAUSE = float(os.environ.get("YAHOO_CHART_REQ_INTERVAL", "0.35"))
+DEFAULT_SAVE_MODE = "merge"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -203,13 +204,15 @@ class YahooChartClient:
         raise RuntimeError("unreachable retry state")
 
 
-def save_frame(ticker: str, frame: pd.DataFrame, output_dir: Path, profile: dict[str, str]) -> bool:
+def save_frame(ticker: str, frame: pd.DataFrame, output_dir: Path, profile: dict[str, str], save_mode: str) -> bool:
     if frame.empty:
         return False
     output = frame.copy()
     output["sector"] = clean_profile_value(profile.get("sector")) or PROFILE_FALLBACK
     output["industry"] = clean_profile_value(profile.get("industry")) or PROFILE_FALLBACK
     output = output[["date", "open", "close", "high", "low", "volume", "sector", "industry"]]
+    if save_mode == "merge":
+        output = merge_dataframe_with_csv(output, output_dir, ticker)
     write_dataframe_csv(output, output_dir, ticker)
     return True
 
@@ -225,6 +228,7 @@ def main() -> int:
     parser.add_argument("--request-pause", type=float, default=DEFAULT_REQUEST_PAUSE)
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--proxy", default=DEFAULT_PROXY)
+    parser.add_argument("--save-mode", choices=["merge", "replace"], default=DEFAULT_SAVE_MODE)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--smoke-symbol", default="AAPL")
     args = parser.parse_args()
@@ -265,7 +269,7 @@ def main() -> int:
     for index, ticker in enumerate(tickers, start=1):
         try:
             frame = client.fetch(ticker, start, end)
-            if save_frame(ticker, frame, args.out, profiles.get(ticker, {})):
+            if save_frame(ticker, frame, args.out, profiles.get(ticker, {}), args.save_mode):
                 success += 1
             else:
                 failed.append(ticker)

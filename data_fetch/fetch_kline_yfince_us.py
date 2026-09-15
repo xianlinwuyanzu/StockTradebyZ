@@ -15,7 +15,7 @@ import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
 from datetime import datetime, timedelta
-from utils.safe_io import is_safe_ticker, write_dataframe_csv
+from utils.safe_io import is_safe_ticker, merge_dataframe_with_csv, write_dataframe_csv
 
 # --------------------------- 配置 --------------------------- #
 warnings.filterwarnings("ignore")
@@ -47,6 +47,7 @@ RATE_LIMIT_WINDOW = 60             # 窗口大小（秒）
 # 滑动窗口限速器（模块级单例）
 _call_timestamps: collections.deque = collections.deque()
 PROFILE_FALLBACK = "Unknown"
+DEFAULT_SAVE_MODE = "merge"
 
 # 日志配置
 logging.basicConfig(
@@ -294,6 +295,7 @@ def process_and_save_data(
     df: pd.DataFrame,
     output_dir: Path,
     profile: Optional[Dict[str, str]] = None,
+    save_mode: str = DEFAULT_SAVE_MODE,
 ) -> bool:
     """
     处理和保存单只股票数据
@@ -346,11 +348,12 @@ def process_and_save_data(
                 df[col] = None
         
         df = df[required_columns]
+        output = merge_dataframe_with_csv(df, output_dir, ticker) if save_mode == "merge" else df
         
         # 保存为CSV
-        write_dataframe_csv(df, output_dir, ticker)
+        write_dataframe_csv(output, output_dir, ticker)
         
-        logger.debug(f"{ticker}: 保存成功，{len(df)} 行数据")
+        logger.debug(f"{ticker}: 保存成功，{len(output)} 行数据")
         return True
         
     except Exception as e:
@@ -410,6 +413,8 @@ def main():
                        help="每批下载的股票数量")
     parser.add_argument("--delay", type=int, default=DELAY_BETWEEN_BATCHES,
                        help="批次间隔时间（秒）")
+    parser.add_argument("--save-mode", choices=["merge", "replace"], default=DEFAULT_SAVE_MODE,
+                       help="保存模式：merge=按日期合并到已有CSV，replace=覆盖CSV（默认：merge）")
     args = parser.parse_args()
     
     # 创建输出目录
@@ -485,7 +490,7 @@ def main():
                         )
                         profile_cache[ticker_key] = profile
 
-                    if process_and_save_data(ticker, batch_data[ticker], args.out, profile=profile):
+                    if process_and_save_data(ticker, batch_data[ticker], args.out, profile=profile, save_mode=args.save_mode):
                         success_count += 1
                     else:
                         fail_count += 1

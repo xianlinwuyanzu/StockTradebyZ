@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from quantdash import QuantDash
 from tqdm import tqdm
-from utils.safe_io import is_safe_ticker, ticker_csv_path, write_dataframe_csv
+from utils.safe_io import is_safe_ticker, merge_dataframe_with_csv, ticker_csv_path, write_dataframe_csv
 
 PROFILE_FALLBACK = "Unknown"
 
@@ -28,6 +28,7 @@ DEFAULT_QD_BATCH_SIZE = 100
 DEFAULT_MAX_WORKERS = 4
 DEFAULT_TIMEOUT_WAIT = 30
 DEFAULT_COUNT = 500
+DEFAULT_SAVE_MODE = "merge"
 MAX_RETRIES = int(os.environ.get("QD_MAX_RETRIES", "3"))
 SINGLE_REQUEST_PAUSE = float(os.environ.get("QD_REQ_INTERVAL", "0.35"))
 QD_SDK_MAX_RETRIES = int(os.environ.get("QD_SDK_MAX_RETRIES", "0"))
@@ -461,6 +462,7 @@ def _save_one(
     out_dir: Path,
     profile: Optional[Dict[str, str]],
     period: str,
+    save_mode: str,
 ) -> bool:
     if isinstance(df, dict):
         df = pd.DataFrame(df)
@@ -475,9 +477,10 @@ def _save_one(
     profile = profile or {}
     std["sector"] = _clean_profile_value(profile.get("sector", "")) or PROFILE_FALLBACK
     std["industry"] = _clean_profile_value(profile.get("industry", "")) or PROFILE_FALLBACK
+    output = merge_dataframe_with_csv(std, out_dir, ticker) if save_mode == "merge" else std
 
     try:
-        write_dataframe_csv(std, out_dir, ticker)
+        write_dataframe_csv(output, out_dir, ticker)
     except (OSError, ValueError) as exc:
         logger.warning("failed to save %s: %s", ticker, exc)
         return False
@@ -630,6 +633,8 @@ def main() -> int:
     parser.add_argument("--qd-batch-size", type=int, default=DEFAULT_QD_BATCH_SIZE, help="QuantDash SDK internal batch size")
     parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS, help="QuantDash SDK max workers")
     parser.add_argument("--count", type=int, default=DEFAULT_COUNT, help="number of daily bars to request")
+    parser.add_argument("--save-mode", choices=["merge", "replace"], default=DEFAULT_SAVE_MODE,
+                        help="merge fetched rows into existing CSV by date, or replace the CSV (default: merge)")
     parser.add_argument("--skip-fresh-days", type=float, default=0.0,
                         help="legacy mtime-based skip window in days; for daily mode, date-based skip is preferred")
     parser.add_argument("--skip-if-up-to-date", dest="skip_if_up_to_date", action="store_true", default=True,
@@ -799,7 +804,7 @@ def main() -> int:
 
                 if df is not None:
                     profile = profile_seed.get(ticker, {"sector": PROFILE_FALLBACK, "industry": PROFILE_FALLBACK})
-                    if _save_one(ticker, df, args.out, profile, period=args.period):
+                    if _save_one(ticker, df, args.out, profile, period=args.period, save_mode=args.save_mode):
                         success += 1
                     else:
                         failed.append(ticker)
