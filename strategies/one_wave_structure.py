@@ -38,8 +38,8 @@ ONE_WAVE_DEFAULTS = {
     "max_reference_period": 25,
     "min_top_to_reference_bars": 2,
     "max_reference_j": 5.0,
-    "max_reference_rebound": 0.15,
-    "j_rebound_exit_threshold": 80.0,
+    "max_reference_rebound": 0.08,
+    "j_rebound_exit_threshold": 60.0,
     "timing_j_rebound_scale": 30.0,
     "timing_low_j_threshold": 10.0,
     "timing_doji_body_ratio": 0.20,
@@ -48,8 +48,8 @@ ONE_WAVE_DEFAULTS = {
     "pullback_path_efficiency_high": 0.85,
     "pullback_path_efficiency_penalty": 5.0,
     "max_pullback": 0.28,
-    "max_observation_after_reference": 25,
-    "support_close_tolerance": 0.0,
+    "max_observation_after_reference": 10,
+    "support_close_tolerance": 0.03,
     "two_wave_min_step": 0.02,
     "two_wave_min_return": 0.06,
     "two_wave_min_period": 7,
@@ -389,7 +389,9 @@ def _build_candidate(
     support_gap = lowest_close / start_price - 1.0 if start_price > 0 else -1.0
     if enforce_exit_rules and support_gap < -float(cfg["support_close_tolerance"]):
         return None
-    if enforce_exit_rules and latest_close < start_price:
+    if enforce_exit_rules and latest_close < start_price * (
+        1.0 - float(cfg["support_close_tolerance"])
+    ):
         return None
 
     wave1_period = top1.start - start1.start
@@ -430,7 +432,6 @@ def _build_candidate(
     lowest_j_index = top1.end + lowest_j_offset
     current_j = float(j_values.iloc[latest_index])
     j_after_reference = j_values.iloc[j2_reference_index : latest_index + 1].astype(float)
-    lowest_j_after_reference = float(j_after_reference.min())
     max_j_after_reference = float(j_after_reference.max())
     close_after_reference = frame["close"].iloc[j2_reference_index : latest_index + 1].astype(float)
     max_rebound_return = (
@@ -445,10 +446,7 @@ def _build_candidate(
     if enforce_exit_rules:
         if max_rebound_return >= float(cfg["max_reference_rebound"]):
             return None
-        if (
-            max_j_after_reference >= float(cfg["j_rebound_exit_threshold"])
-            and max_j_after_reference > lowest_j_after_reference
-        ):
+        if max_j_after_reference >= float(cfg["j_rebound_exit_threshold"]):
             return None
     freshness = 1.0 - (latest_index - j2_reference_index) / max(
         int(cfg["max_observation_after_reference"]), 1

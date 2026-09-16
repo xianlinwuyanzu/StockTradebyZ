@@ -1001,6 +1001,27 @@ def _build_active_candidate(
         latest_index,
         cfg,
     )
+    # Once the post-reference daily J rebounds to the exit threshold, the
+    # timing window has ended even if price and wave structure remain intact.
+    timing_reference_index = _find_timing_reference(
+        frame,
+        j_values,
+        starts[-1],
+        tops[-1],
+        cfg,
+    )
+    if (
+        timing_reference_index is not None
+        and latest_index - timing_reference_index
+        > int(cfg["timing_max_observation_after_reference"])
+    ):
+        return None
+    if (
+        timing_reference_index is not None
+        and float(j_values.iloc[timing_reference_index : latest_index + 1].max())
+        >= float(cfg["timing_j_rebound_exit_threshold"])
+    ):
+        return None
     position_context = _structure_position_context(
         frame,
         starts,

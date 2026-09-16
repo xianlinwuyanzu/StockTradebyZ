@@ -74,6 +74,8 @@ NARROW_DEFAULTS = {
     "timing_reference_support_tolerance": 0.0,
     "timing_low_j_threshold": 10.0,
     "timing_j_rebound_scale": 30.0,
+    "timing_j_rebound_exit_threshold": 60.0,
+    "timing_max_observation_after_reference": 10,
     "timing_doji_body_ratio": 0.20,
     "timing_doji_bonus": 3.0,
     "up_path_efficiency_weight": 1.5,
